@@ -47,12 +47,52 @@ def resolve_quarter(q: str) -> QInfo:
     )
 
 
-# ── Filename & Data loading helpers ─────────────────────────────────────────
+# ── Period & Quarter arithmetic helpers ──────────────────────────────────────
 
 _DATE_RE = re.compile(r"^(\d{4})[-_/](\d{2})")
 _QCOL_RE = re.compile(r"^Q\d_\d{4}$")
-_RENAMES = {"active_ingestion_quarter": "ingestion_quarter",
-            "active_test_quarter": "test_quarter"}
+_RENAMES = {
+    "active_ingestion_quarter": "ingestion_quarter",
+    "active_test_quarter": "test_quarter",
+    "active_base_quarter": "base_quarter",
+}
+
+
+def _period_to_qnum(val: Any) -> int | None:
+    """Convert quarter or date representations to a sequential integer for chronological comparison.
+
+    Examples:
+      'Q1_2025' -> 2025 * 4 + 1 = 8101
+      '2025-01-01' -> 2025 * 4 + 1 = 8101
+      '2025-07' -> 2025 * 4 + 3 = 8103
+    """
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, (pd.Timestamp, pd.DatetimeIndex)):
+        return val.year * 4 + ((val.month - 1) // 3 + 1)
+    s = str(val).strip()
+    if not s:
+        return None
+
+    # Pattern 1: Q1_2025, Q1-2025, Q1 2025, Q1.2025, Q1/2025
+    m = re.match(r"^Q([1-4])[\s_\-/\.]+(\d{4})$", s, re.IGNORECASE)
+    if m:
+        return int(m.group(2)) * 4 + int(m.group(1))
+
+    # Pattern 2: 2025_Q1, 2025-Q1, 2025Q1
+    m = re.match(r"^(\d{4})[\s_\-/\.]*Q([1-4])$", s, re.IGNORECASE)
+    if m:
+        return int(m.group(1)) * 4 + int(m.group(2))
+
+    # Pattern 3: 2025-01-01, 2025-01, 2025_01, 2025/01
+    m = re.match(r"^(\d{4})[-_/](\d{1,2})", s)
+    if m:
+        yr = int(m.group(1))
+        mo = int(m.group(2))
+        q = max(1, min(4, (mo - 1) // 3 + 1))
+        return yr * 4 + q
+
+    return None
 
 
 def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
@@ -236,10 +276,14 @@ def _strip(d): return {k: v for k, v in d.items() if v is not None}
 
 def _kri1(row, qi):
     results = []
+    t_q = _s(row.get("test_quarter")) or qi.test
+    b_q = _s(row.get("base_quarter")) or qi.base
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
         if _s(row.get(f"KRI_1_{sfx}")) != 1: continue
         results.append(_strip({
             "kri": "KRI_1", "dir": label,
+            "test_quarter": t_q,
+            "base_quarter": b_q,
             "test_q_cnt": _s(row.get("test_quarter_count")),
             "base_q_cnt": _s(row.get("base_quarter_count")),
             "diff": _s(row.get("test_base_quarter_diff")),
@@ -250,17 +294,25 @@ def _kri1(row, qi):
             "trend": _trend(row, qi.test_months),
         }))
     if not results and _s(row.get("KRI_1")) == 1:
-        results.append(_strip({"kri": "KRI_1",
+        results.append(_strip({
+            "kri": "KRI_1",
+            "test_quarter": t_q,
+            "base_quarter": b_q,
             "test_q_cnt": _s(row.get("test_quarter_count")),
             "base_q_cnt": _s(row.get("base_quarter_count")),
             "diff": _s(row.get("test_base_quarter_diff")),
-            "trend": _trend(row, qi.test_months)}))
+            "trend": _trend(row, qi.test_months)
+        }))
     return results
 
 
 def _kri2(row, qi):
+    t_q = _s(row.get("test_quarter")) or qi.test
+    b_q = _s(row.get("base_quarter")) or qi.base
     return [_strip({
         "kri": "KRI_2",
+        "test_quarter": t_q,
+        "base_quarter": b_q,
         "test_q_cnt": _s(row.get("test_quarter_count")),
         "base_q_cnt": _s(row.get("base_quarter_count")),
         "diff": _s(row.get("test_base_quarter_diff")),
@@ -275,11 +327,15 @@ def _kri2(row, qi):
 
 def _kri3(row, qi):
     results = []
+    t_q = _s(row.get("test_quarter")) or qi.test
+    b_q = _s(row.get("base_quarter")) or qi.base
     for label, col in [("amount", "KRI_3_amount"), ("freq", "KRI_3_freq"),
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
         if _s(row.get(col)) != 1: continue
         results.append(_strip({
             "kri": "KRI_3", "sub": label,
+            "test_quarter": t_q,
+            "base_quarter": b_q,
             "test_accum_amt": _s(row.get("test_quarter_accum_ratio_amount")),
             "base_accum_amt": _s(row.get("base_quarter_accum_ratio_amount")),
             "dev_amt": _s(row.get("kri3_amount_deviation")),
@@ -289,16 +345,22 @@ def _kri3(row, qi):
             "tpr": _s(row.get("true_positive_rate")),
         }))
     if not results and _s(row.get("KRI_3")) == 1:
-        results.append(_strip({"kri": "KRI_3",
+        results.append(_strip({
+            "kri": "KRI_3",
+            "test_quarter": t_q,
+            "base_quarter": b_q,
             "alert_cnt": _s(row.get("alert_count")),
             "fpr": _s(row.get("false_positive_rate")),
-            "tpr": _s(row.get("true_positive_rate"))}))
+            "tpr": _s(row.get("true_positive_rate"))
+        }))
     return results
 
 
 def _kri6(row, qi):
+    t_q = _s(row.get("test_quarter")) or qi.test
     return [_strip({
         "kri": "KRI_6",
+        "test_quarter": t_q,
         "test_q_alerts": _s(row.get("test_quarter_alert_count")),
         "test_q_m1_alerts": _s(row.get("test_quarter_minus_1_alert_count")),
         "test_q_m2_alerts": _s(row.get("test_quarter_minus_2_alert_count")),
@@ -324,13 +386,34 @@ def filter_kris(tables, qi):
         print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in quarter)")
 
         for _, row in triggered.iterrows():
+            # Benchmark period filtering:
+            # Benchmark quarter must always be before test_quarter and before base_quarter.
+            bench_val = None
+            for bcol in ("benchmark_quarter", "benchmark_period", "oldest_benchmark_period", "benchmark"):
+                if bcol in row.index and _s(row.get(bcol)) is not None:
+                    bench_val = _s(row.get(bcol))
+                    break
+
+            base_val = _s(row.get("base_quarter"))
+            test_val = _s(row.get("test_quarter"))
+
+            if bench_val and base_val:
+                b_bench = _period_to_qnum(bench_val)
+                b_base = _period_to_qnum(base_val)
+                if b_bench is not None and b_base is not None and b_bench > b_base:
+                    continue  # Filter out: base_quarter is older than benchmark boundary
+
+            if bench_val and test_val:
+                b_bench = _period_to_qnum(bench_val)
+                b_test = _period_to_qnum(test_val)
+                if b_bench is not None and b_test is not None and b_bench > b_test:
+                    continue  # Filter out: test_quarter is older than benchmark boundary
+
             ad = str(row.get("alert_definition", "?"))
             meta = _strip({
                 "identity": _identity(row),
-                "quarters": {"ingestion": qi.ingestion,
-                             "test": _s(row.get("test_quarter")) or qi.test,
-                             "base": _s(row.get("base_quarter")) or qi.base},
-                "thresholds": _thresholds(row), "flags": _flags(row),
+                "thresholds": _thresholds(row),
+                "flags": _flags(row),
                 "recommendation": _s(row.get("recommendation")),
                 "final_recommendation": _s(row.get("final_recommendation")),
             })
@@ -391,7 +474,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         n = 0
         for _, row in df.iterrows():
             ad = str(row.get("alert_definition", ""))
-            val = _s(row[qc])
+            val = _s(row.get(qc))
             if val is not None:
                 data.setdefault(ad, {})[out_key] = val
                 avail.setdefault(ad, []).append(sheet)
@@ -440,8 +523,23 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         block = {"alert_definition": ad}
         for k in ("identity", "thresholds", "flags"):
             if meta.get(k): block[k] = meta[k]
-        block["quarters"] = meta.get("quarters",
-            {"ingestion": qi.ingestion, "test": qi.test, "base": qi.base})
+
+        # Extract unique evaluated base and test quarters across evidences
+        evaluated_base_quarters = sorted({ev["base_quarter"] for ev in evidences if "base_quarter" in ev})
+        evaluated_test_quarters = sorted({ev["test_quarter"] for ev in evidences if "test_quarter" in ev})
+
+        quarters_summary = {
+            "ingestion": qi.ingestion,
+            "test": evaluated_test_quarters[0] if len(evaluated_test_quarters) == 1 else (evaluated_test_quarters or qi.test),
+        }
+        if len(evaluated_base_quarters) == 1:
+            quarters_summary["base"] = evaluated_base_quarters[0]
+        elif evaluated_base_quarters:
+            quarters_summary["base_quarters"] = evaluated_base_quarters
+        else:
+            quarters_summary["base"] = qi.base
+
+        block["quarters"] = quarters_summary
         block["triggered_kris"] = evidences
         rec = meta.get("final_recommendation") or meta.get("recommendation")
         if rec: block["recommendation"] = rec
@@ -456,6 +554,8 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
             if s: subs.setdefault(k, []).append(s)
         entry = {"alert_definition": ad, "triggered_kris": kris}
         if any(subs.values()): entry["kri_sub_triggers"] = subs
+        if evaluated_base_quarters:
+            entry["evaluated_base_quarters"] = evaluated_base_quarters
         entry["available_kpis"] = kpi_avail.get(ad, [])
         matrix.append(entry)
 
