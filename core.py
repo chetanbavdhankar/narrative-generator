@@ -52,17 +52,18 @@ def format_quarter(val: Any) -> str | None:
     if m:
         return f"Q{m.group(2)}_{m.group(1)}"
 
-    # Pattern 3: 2025-01-01, 2025-01, 2025_01, 2025/01
-    m = re.match(r"^(\d{4})[-_/](\d{1,2})", s)
-    if m:
-        yr = int(m.group(1))
-        mo = int(m.group(2))
-        q = max(1, min(4, (mo - 1) // 3 + 1))
-        return f"Q{q}_{yr}"
-
-    # Pattern 4: 5-digit integer string like 20251 (YYYYQ)
+    # Pattern 3: 5-digit integer string like 20251 (YYYYQ)
     if s.isdigit() and len(s) == 5:
         return f"Q{s[4]}_{s[:4]}"
+
+    # Fallback: robust pd.to_datetime parsing for all standard ISO, EU, US date formats
+    try:
+        ts = pd.to_datetime(s, errors="coerce")
+        if pd.notna(ts):
+            q = (ts.month - 1) // 3 + 1
+            return f"Q{q}_{ts.year}"
+    except Exception:
+        pass
 
     return s
 
@@ -98,6 +99,10 @@ _RENAMES = {
     "active_ingestion_quarter": "ingestion_quarter",
     "active_test_quarter": "test_quarter",
     "active_base_quarter": "base_quarter",
+    "active_benchmark_quarter": "benchmark_quarter",
+    "active_benchmark_period": "benchmark_quarter",
+    "benchmark_period": "benchmark_quarter",
+    "benchmark_date": "benchmark_quarter",
 }
 
 
@@ -333,6 +338,7 @@ def _kri1(row, qi):
     results = []
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
+    bench_q = format_quarter(_s(row.get("benchmark_quarter")))
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
         col = f"KRI_1_{sfx}"
         if col in row.index and _is_one(row.get(col)):
@@ -341,6 +347,7 @@ def _kri1(row, qi):
                 "direction": label,
                 "test_quarter": t_q,
                 "base_quarter": b_q,
+                "benchmark_quarter": bench_q,
                 "test_quarter_count": _s(row.get("test_quarter_count")),
                 "base_quarter_count": _s(row.get("base_quarter_count")),
                 "difference": _s(row.get("test_base_quarter_diff")),
@@ -355,6 +362,7 @@ def _kri1(row, qi):
             "kri": "KRI_1",
             "test_quarter": t_q,
             "base_quarter": b_q,
+            "benchmark_quarter": bench_q,
             "test_quarter_count": _s(row.get("test_quarter_count")),
             "base_quarter_count": _s(row.get("base_quarter_count")),
             "difference": _s(row.get("test_base_quarter_diff")),
@@ -366,10 +374,12 @@ def _kri1(row, qi):
 def _kri2(row, qi):
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
+    bench_q = format_quarter(_s(row.get("benchmark_quarter")))
     return [_strip({
         "kri": "KRI_2",
         "test_quarter": t_q,
         "base_quarter": b_q,
+        "benchmark_quarter": bench_q,
         "test_quarter_count": _s(row.get("test_quarter_count")),
         "base_quarter_count": _s(row.get("base_quarter_count")),
         "difference": _s(row.get("test_base_quarter_diff")),
@@ -386,6 +396,7 @@ def _kri3(row, qi):
     results = []
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
+    bench_q = format_quarter(_s(row.get("benchmark_quarter")))
     for label, col in [("amount", "KRI_3_amount"), ("freq", "KRI_3_freq"),
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
         if col in row.index and _is_one(row.get(col)):
@@ -394,6 +405,7 @@ def _kri3(row, qi):
                 "sub_trigger": label,
                 "test_quarter": t_q,
                 "base_quarter": b_q,
+                "benchmark_quarter": bench_q,
                 "test_quarter_accum_ratio_amount": _s(row.get("test_quarter_accum_ratio_amount")),
                 "base_quarter_accum_ratio_amount": _s(row.get("base_quarter_accum_ratio_amount")),
                 "amount_deviation": _s(row.get("kri3_amount_deviation")),
@@ -407,6 +419,7 @@ def _kri3(row, qi):
             "kri": "KRI_3",
             "test_quarter": t_q,
             "base_quarter": b_q,
+            "benchmark_quarter": bench_q,
             "alert_count": _s(row.get("alert_count")),
             "false_positive_rate": _s(row.get("false_positive_rate")),
             "true_positive_rate": _s(row.get("true_positive_rate"))
@@ -453,7 +466,7 @@ def filter_kris(tables, qi):
         for _, row in triggered.iterrows():
             # Filter 2 (for KRI_1, KRI_2, KRI_3): base_quarter must be strictly higher than benchmark_quarter
             bench_val = None
-            for bcol in ("benchmark_quarter", "benchmark_period"):
+            for bcol in ("benchmark_quarter", "benchmark_period", "active_benchmark_quarter", "benchmark"):
                 if bcol in row.index and pd.notna(row.get(bcol)):
                     bench_val = row.get(bcol)
                     break
