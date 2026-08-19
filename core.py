@@ -49,7 +49,7 @@ def resolve_quarter(q: str) -> QInfo:
 
 # ── Filename & Data loading helpers ─────────────────────────────────────────
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RE = re.compile(r"^(\d{4})[-_/](\d{2})")
 _QCOL_RE = re.compile(r"^Q\d_\d{4}$")
 _RENAMES = {"active_ingestion_quarter": "ingestion_quarter",
             "active_test_quarter": "test_quarter"}
@@ -122,12 +122,26 @@ def find_matching_files(input_dir: str | Path, country: str, bl: str) -> list[Pa
 
 
 def _norm_col(c):
+    if isinstance(c, (pd.Timestamp, pd.DatetimeIndex)):
+        return f"m_{c.strftime('%Y_%m')}"
     s = str(c).strip()
-    if _DATE_RE.match(s):
-        return f"m_{s[:7].replace('-', '_')}"
+    m = _DATE_RE.match(s)
+    if m:
+        return f"m_{m.group(1)}_{m.group(2)}"
     if _QCOL_RE.match(s):
         return f"q_{s}"
     return _RENAMES.get(s, s)
+
+
+def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize and deduplicate column names, then reset index."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df.columns = [_norm_col(c) for c in df.columns]
+    # Remove duplicate columns (keeping first occurrence) to prevent DataFrame-valued column slicing
+    df = df.loc[:, ~df.columns.duplicated(keep="first")]
+    # Ensure fresh 0..N-1 RangeIndex to prevent axis reindexing errors
+    return df.reset_index(drop=True)
 
 
 def load_tables(
@@ -153,9 +167,14 @@ def load_tables(
         xls = pd.ExcelFile(f, engine="openpyxl")
         print(f"  → {f.name}  ({', '.join(xls.sheet_names)})")
         for s in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=s)
-            df.columns = [_norm_col(c) for c in df.columns]
-            tables[s] = df
+            raw_df = pd.read_excel(xls, sheet_name=s)
+            cleaned_df = _clean_dataframe(raw_df)
+            if s in tables:
+                # Merge across files without index clashes
+                merged = pd.concat([tables[s], cleaned_df], ignore_index=True)
+                tables[s] = _clean_dataframe(merged)
+            else:
+                tables[s] = cleaned_df
     print(f"[Load] {len(tables)} table(s) total.\n")
     return tables
 
@@ -163,8 +182,15 @@ def load_tables(
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _s(val):
-    """Safe scalar: numpy → Python native, NaN → None."""
-    if pd.isna(val): return None
+    """Safe scalar: Series/array unwrapping, numpy → Python native, NaN → None."""
+    if val is None:
+        return None
+    if isinstance(val, (pd.Series, pd.DataFrame)):
+        val = val.iloc[0] if len(val) > 0 else None
+        if val is None:
+            return None
+    if pd.isna(val):
+        return None
     return val.item() if hasattr(val, "item") else val
 
 
@@ -291,9 +317,10 @@ def filter_kris(tables, qi):
         if sheet not in tables: continue
         df = tables[sheet]
         if sheet not in df.columns: continue
+        df = df.reset_index(drop=True)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion]
-        triggered = df[df[sheet] == 1]
+            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
+        triggered = df[df[sheet] == 1].reset_index(drop=True)
         print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in quarter)")
 
         for _, row in triggered.iterrows():
@@ -353,11 +380,11 @@ def enrich_kpis(tables, triggered_ads, qi):
 
     for sheet, out_key in _SIMPLE_KPIS.items():
         if sheet not in tables: continue
-        df = tables[sheet]
+        df = tables[sheet].reset_index(drop=True)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion]
+            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
         if "alert_definition" in df.columns:
-            df = df[df["alert_definition"].isin(triggered_ads)]
+            df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         qc = _q_col(df, qi)
         if not qc or df.empty: continue
 
@@ -373,13 +400,13 @@ def enrich_kpis(tables, triggered_ads, qi):
 
     for sheet, cfg in _STRUCT_KPIS.items():
         if sheet not in tables: continue
-        df = tables[sheet]
+        df = tables[sheet].reset_index(drop=True)
         filt_col = cfg["filter"]
         filt_val = qi.test if filt_col == "test_quarter" else qi.ingestion
         if filt_col in df.columns:
-            df = df[df[filt_col] == filt_val]
+            df = df[df[filt_col] == filt_val].reset_index(drop=True)
         if "alert_definition" in df.columns:
-            df = df[df["alert_definition"].isin(triggered_ads)]
+            df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         if df.empty: continue
 
         n = 0
