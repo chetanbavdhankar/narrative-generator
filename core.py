@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-# ── Quarter resolution ──────────────────────────────────────────────────────
+# ── Quarter resolution & standardization ────────────────────────────────────
 
 _Q_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
 
@@ -25,8 +25,51 @@ class QInfo:
     test_months: tuple[str, str, str]
 
 
+def format_quarter(val: Any) -> str | None:
+    """Standardize any quarter or date representation into 'Q<N>_<YYYY>'.
+
+    Examples:
+      'Q1_2025', 'q1-2025', '2025Q1', '2025-01-01', pd.Timestamp('2025-02-15') -> 'Q1_2025'
+      '2025-07-01', '2025-07' -> 'Q3_2025'
+      '20251' -> 'Q1_2025'
+    """
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, (pd.Timestamp, pd.DatetimeIndex)):
+        q = (val.month - 1) // 3 + 1
+        return f"Q{q}_{val.year}"
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return None
+
+    # Pattern 1: Q1_2025, Q1-2025, Q1 2025, Q1.2025, Q1/2025
+    m = re.match(r"^Q([1-4])[\s_\-/\.]*(\d{4})$", s, re.IGNORECASE)
+    if m:
+        return f"Q{m.group(1)}_{m.group(2)}"
+
+    # Pattern 2: 2025_Q1, 2025-Q1, 2025Q1, 2025/Q1
+    m = re.match(r"^(\d{4})[\s_\-/\.]*Q([1-4])$", s, re.IGNORECASE)
+    if m:
+        return f"Q{m.group(2)}_{m.group(1)}"
+
+    # Pattern 3: 2025-01-01, 2025-01, 2025_01, 2025/01
+    m = re.match(r"^(\d{4})[-_/](\d{1,2})", s)
+    if m:
+        yr = int(m.group(1))
+        mo = int(m.group(2))
+        q = max(1, min(4, (mo - 1) // 3 + 1))
+        return f"Q{q}_{yr}"
+
+    # Pattern 4: 5-digit integer string like 20251 (YYYYQ)
+    if s.isdigit() and len(s) == 5:
+        return f"Q{s[4]}_{s[:4]}"
+
+    return s
+
+
 def resolve_quarter(q: str) -> QInfo:
-    parts = q.strip().split("_")
+    std = format_quarter(q) or q.strip()
+    parts = std.split("_")
     qn, yr = int(parts[0][1:]), int(parts[1])
 
     def _shift(qn, yr, off):
@@ -59,43 +102,13 @@ _RENAMES = {
 
 
 def _period_to_qnum(val: Any) -> int | None:
-    """Convert quarter or date representations to a sequential integer for chronological comparison.
-
-    Examples:
-      'Q1_2025' -> 2025 * 4 + 1 = 8101
-      '2025-01-01' -> 2025 * 4 + 1 = 8101
-      '2025-07' -> 2025 * 4 + 3 = 8103
-    """
-    if val is None or pd.isna(val):
+    """Convert standardized quarter 'Q<N>_<YYYY>' to chronological integer YYYY * 4 + N."""
+    fmt = format_quarter(val)
+    if not fmt:
         return None
-    if isinstance(val, (pd.Timestamp, pd.DatetimeIndex)):
-        return val.year * 4 + ((val.month - 1) // 3 + 1)
-    s = str(val).strip()
-    if not s or s.lower() in ("nan", "none", "null", "nat"):
-        return None
-
-    # Pattern 1: Q1_2025, Q1-2025, Q1 2025, Q1.2025, Q1/2025
-    m = re.match(r"^Q([1-4])[\s_\-/\.]*(\d{4})$", s, re.IGNORECASE)
+    m = re.match(r"^Q([1-4])_(\d{4})$", fmt, re.IGNORECASE)
     if m:
         return int(m.group(2)) * 4 + int(m.group(1))
-
-    # Pattern 2: 2025_Q1, 2025-Q1, 2025Q1, 2025/Q1
-    m = re.match(r"^(\d{4})[\s_\-/\.]*Q([1-4])$", s, re.IGNORECASE)
-    if m:
-        return int(m.group(1)) * 4 + int(m.group(2))
-
-    # Pattern 3: 2025-01-01, 2025-01, 2025_01, 2025/01
-    m = re.match(r"^(\d{4})[-_/](\d{1,2})", s)
-    if m:
-        yr = int(m.group(1))
-        mo = int(m.group(2))
-        q = max(1, min(4, (mo - 1) // 3 + 1))
-        return yr * 4 + q
-
-    # Pattern 4: 5-digit integer string like 20251 (YYYYQ)
-    if s.isdigit() and len(s) == 5:
-        return int(s[:4]) * 4 + int(s[4])
-
     return None
 
 
@@ -188,17 +201,24 @@ def _norm_col(c):
     if m:
         return f"m_{m.group(1)}_{m.group(2)}"
     if _QCOL_RE.match(s):
-        return f"q_{s.upper()}"
+        return f"q_{format_quarter(s)}"
     return _RENAMES.get(s.lower(), _RENAMES.get(s, s))
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize and deduplicate column names, then reset index."""
+    """Normalize and deduplicate column names, standardize quarter columns, and reset index."""
     if df is None or df.empty:
         return pd.DataFrame()
     df.columns = [_norm_col(c) for c in df.columns]
     # Remove duplicate columns (keeping first occurrence) to prevent DataFrame-valued column slicing
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
+
+    # Standardize all quarter/period values to 'Q<N>_<YYYY>'
+    for c in df.columns:
+        c_lower = str(c).lower()
+        if "quarter" in c_lower or "benchmark_period" in c_lower:
+            df[c] = df[c].apply(format_quarter)
+
     # Ensure fresh 0..N-1 RangeIndex to prevent axis reindexing errors
     return df.reset_index(drop=True)
 
@@ -241,7 +261,7 @@ def load_tables(
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _s(val):
-    """Safe scalar: Series/array unwrapping, numpy → Python native, NaN → None."""
+    """Safe scalar: Series/array unwrapping, numpy -> Python native, NaN -> None."""
     if val is None:
         return None
     if isinstance(val, (pd.Series, pd.DataFrame)):
@@ -311,8 +331,8 @@ def _strip(d): return {k: v for k, v in d.items() if v is not None}
 
 def _kri1(row, qi):
     results = []
-    t_q = _s(row.get("test_quarter")) or qi.test
-    b_q = _s(row.get("base_quarter")) or qi.base
+    t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
+    b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
         col = f"KRI_1_{sfx}"
         if col in row.index and _is_one(row.get(col)):
@@ -344,8 +364,8 @@ def _kri1(row, qi):
 
 
 def _kri2(row, qi):
-    t_q = _s(row.get("test_quarter")) or qi.test
-    b_q = _s(row.get("base_quarter")) or qi.base
+    t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
+    b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     return [_strip({
         "kri": "KRI_2",
         "test_quarter": t_q,
@@ -364,8 +384,8 @@ def _kri2(row, qi):
 
 def _kri3(row, qi):
     results = []
-    t_q = _s(row.get("test_quarter")) or qi.test
-    b_q = _s(row.get("base_quarter")) or qi.base
+    t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
+    b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     for label, col in [("amount", "KRI_3_amount"), ("freq", "KRI_3_freq"),
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
         if col in row.index and _is_one(row.get(col)):
@@ -395,7 +415,7 @@ def _kri3(row, qi):
 
 
 def _kri6(row, qi):
-    t_q = _s(row.get("test_quarter")) or qi.test
+    t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     return [_strip({
         "kri": "KRI_6",
         "test_quarter": t_q,
@@ -403,7 +423,7 @@ def _kri6(row, qi):
         "test_quarter_minus_1_alerts": _s(row.get("test_quarter_minus_1_alert_count")),
         "test_quarter_minus_2_alerts": _s(row.get("test_quarter_minus_2_alert_count")),
         "total_monitoring_alerts": _s(row.get("total_count")),
-        "oldest_benchmark_period": _s(row.get("oldest_benchmark_period")),
+        "oldest_benchmark_period": format_quarter(_s(row.get("oldest_benchmark_period"))) or _s(row.get("oldest_benchmark_period")),
     })]
 
 
@@ -420,28 +440,32 @@ def filter_kris(tables, qi):
         if sheet not in df.columns:
             continue
         df = df.reset_index(drop=True)
-        if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"].astype(str).str.strip().str.upper() == qi.ingestion.upper()].reset_index(drop=True)
 
+        # Filter 1: Ingestion quarter match (Filter out anything not same as ingestion quarter)
+        if "ingestion_quarter" in df.columns:
+            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
+
+        # Triggered flag match (KRI_1 == 1, KRI_2 == 1, etc.)
         triggered_mask = df[sheet].apply(_is_one)
         triggered = df[triggered_mask].reset_index(drop=True)
         print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in quarter)")
 
         for _, row in triggered.iterrows():
-            # Benchmark quarter filtering:
-            # If both base_quarter and benchmark_quarter exist, filter out rows where base_quarter > benchmark_quarter
+            # Filter 2 (for KRI_1, KRI_2, KRI_3): base_quarter must be strictly higher than benchmark_quarter
             bench_val = None
             for bcol in ("benchmark_quarter", "benchmark_period"):
                 if bcol in row.index and pd.notna(row.get(bcol)):
-                    bench_val = _s(row.get(bcol))
+                    bench_val = row.get(bcol)
                     break
 
-            base_val = _s(row.get("base_quarter"))
-            if bench_val and base_val:
+            base_val = row.get("base_quarter")
+            if bench_val is not None and base_val is not None:
                 b_bench = _period_to_qnum(bench_val)
                 b_base = _period_to_qnum(base_val)
-                if b_bench is not None and b_base is not None and b_base > b_bench:
-                    continue  # Filter out base_quarter higher than benchmark_quarter
+                if b_bench is not None and b_base is not None:
+                    # ONLY select if base_quarter is strictly higher than benchmark_quarter (not equal, not less than)
+                    if not (b_base > b_bench):
+                        continue
 
             ad = str(row.get("alert_definition", "?"))
             meta = _strip({
@@ -516,7 +540,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         if sheet not in tables: continue
         df = tables[sheet].reset_index(drop=True)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"].astype(str).str.strip().str.upper() == qi.ingestion.upper()].reset_index(drop=True)
+            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
         if "alert_definition" in df.columns:
             df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         qc = _q_col(df, qi)
@@ -538,7 +562,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         filt_col = cfg["filter"]
         filt_val = qi.test if filt_col == "test_quarter" else qi.ingestion
         if filt_col in df.columns:
-            df = df[df[filt_col].astype(str).str.strip().str.upper() == filt_val.upper()].reset_index(drop=True)
+            df = df[df[filt_col] == filt_val].reset_index(drop=True)
         if "alert_definition" in df.columns:
             df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         if df.empty: continue
