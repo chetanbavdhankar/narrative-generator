@@ -50,7 +50,7 @@ def resolve_quarter(q: str) -> QInfo:
 # ── Period & Quarter arithmetic helpers ──────────────────────────────────────
 
 _DATE_RE = re.compile(r"^(\d{4})[-_/](\d{2})")
-_QCOL_RE = re.compile(r"^Q\d_\d{4}$")
+_QCOL_RE = re.compile(r"^Q\d_\d{4}$", re.IGNORECASE)
 _RENAMES = {
     "active_ingestion_quarter": "ingestion_quarter",
     "active_test_quarter": "test_quarter",
@@ -71,15 +71,15 @@ def _period_to_qnum(val: Any) -> int | None:
     if isinstance(val, (pd.Timestamp, pd.DatetimeIndex)):
         return val.year * 4 + ((val.month - 1) // 3 + 1)
     s = str(val).strip()
-    if not s:
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
         return None
 
     # Pattern 1: Q1_2025, Q1-2025, Q1 2025, Q1.2025, Q1/2025
-    m = re.match(r"^Q([1-4])[\s_\-/\.]+(\d{4})$", s, re.IGNORECASE)
+    m = re.match(r"^Q([1-4])[\s_\-/\.]*(\d{4})$", s, re.IGNORECASE)
     if m:
         return int(m.group(2)) * 4 + int(m.group(1))
 
-    # Pattern 2: 2025_Q1, 2025-Q1, 2025Q1
+    # Pattern 2: 2025_Q1, 2025-Q1, 2025Q1, 2025/Q1
     m = re.match(r"^(\d{4})[\s_\-/\.]*Q([1-4])$", s, re.IGNORECASE)
     if m:
         return int(m.group(1)) * 4 + int(m.group(2))
@@ -92,51 +92,78 @@ def _period_to_qnum(val: Any) -> int | None:
         q = max(1, min(4, (mo - 1) // 3 + 1))
         return yr * 4 + q
 
+    # Pattern 4: 5-digit integer string like 20251 (YYYYQ)
+    if s.isdigit() and len(s) == 5:
+        return int(s[:4]) * 4 + int(s[4])
+
     return None
 
 
-def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
-    """Extract (country, business_line) from filename strictly by prefix.
+_BL_SYNONYMS = {
+    "RB": "RB",
+    "RETAIL": "RB",
+    "RETAIL_BANK": "RB",
+    "RETAIL_BANKING": "RB",
+    "RETAILBANK": "RB",
+    "RETAILBANKING": "RB",
+    "WB": "WB",
+    "WHOLESALE": "WB",
+    "WHOLESALE_BANK": "WB",
+    "WHOLESALE_BANKING": "WB",
+    "WHOLESALEBANK": "WB",
+    "WHOLESALEBANKING": "WB",
+}
 
-    Naming convention: <COUNTRY>_<BUSINESS_LINE>_<REST...>
+# Regex searching for <COUNTRY>_<BUSINESS_LINE> anywhere in filename (underscore separated)
+_COMBO_RE = re.compile(
+    r"(?:^|_)([A-Za-z]{2,4})_(RB|WB|RETAIL(?:_BANK(?:ING)?)?|RETAILBANK(?:ING)?|WHOLESALE(?:_BANK(?:ING)?)?|WHOLESALEBANK(?:ING)?)(?:_|\.|$)",
+    re.IGNORECASE
+)
+
+
+def normalize_business_line(bl_str: str) -> str:
+    """Map any business line variation (e.g. 'retail_banking', 'WB', 'wholesale') to canonical 'RB' or 'WB'."""
+    s = str(bl_str).strip().upper()
+    return _BL_SYNONYMS.get(s, s)
+
+
+def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
+    """Extract (country, business_line) from anywhere within the filename.
+
+    Naming convention: ...<COUNTRY>_<BUSINESS_LINE>...xlsx
+    Supported business line forms (case-insensitive):
+      RB: RB, Retail, Retail_Bank, Retail_Banking, RetailBank, RetailBanking
+      WB: WB, Wholesale, Wholesale_Bank, Wholesale_Banking, WholesaleBank, WholesaleBanking
+
     Examples:
-      PL_RB_kri.xlsx   -> ('PL', 'RB')
-      ro_wb_kpi.xlsx   -> ('RO', 'WB')
-      FR_RB_2026.xlsx  -> ('FR', 'RB')
-      CH-WB-data.xlsx  -> ('CH', 'WB')
+      PL_RB_kri.xlsx                         -> ('PL', 'RB')
+      2026_Q1_PL_retail_banking_kpi.xlsx     -> ('PL', 'RB')
+      alert_data_RO_wholesale_bank.xlsx      -> ('RO', 'WB')
+      FR_retail_2026.xlsx                    -> ('FR', 'RB')
+      data_CH_WB.xlsx                        -> ('CH', 'WB')
     """
     if filename.startswith("~$"):
         return None
 
     stem = Path(filename).stem.strip()
-
-    # 1. Primary: underscore separated "<COUNTRY>_<BUSINESS_LINE>_..."
-    parts = stem.split("_")
-    if len(parts) >= 2:
-        c = parts[0].strip().upper()
-        b = parts[1].strip().upper()
-        if 2 <= len(c) <= 4 and c.isalpha() and 1 <= len(b) <= 10 and b.isalpha():
-            return c, b
-
-    # 2. Fallback: hyphen separated "<COUNTRY>-<BUSINESS_LINE>-..."
-    parts_h = stem.split("-")
-    if len(parts_h) >= 2:
-        c = parts_h[0].strip().upper()
-        b = parts_h[1].strip().upper()
-        if 2 <= len(c) <= 4 and c.isalpha() and 1 <= len(b) <= 10 and b.isalpha():
-            return c, b
+    m = _COMBO_RE.search(stem)
+    if m:
+        country = m.group(1).upper()
+        raw_bl = m.group(2).upper()
+        canon_bl = normalize_business_line(raw_bl)
+        return country, canon_bl
 
     return None
 
 
 def find_matching_files(input_dir: str | Path, country: str, bl: str) -> list[Path]:
-    """Find all excel files matching country & business line in input_dir."""
+    """Find all excel files matching country & business line anywhere in filename."""
     root = Path(str(input_dir).strip(' "\''))
     if not root.is_dir():
         raise FileNotFoundError(f"Input directory not found: {root}")
 
     c_target = country.strip().upper()
-    b_target = bl.strip().upper()
+    b_target = normalize_business_line(bl)
 
     matched: list[Path] = []
     for entry in os.scandir(root):
@@ -148,14 +175,6 @@ def find_matching_files(input_dir: str | Path, country: str, bl: str) -> list[Pa
 
         combo = extract_combo_from_filename(entry.name)
         if combo and combo[0] == c_target and combo[1] == b_target:
-            matched.append(Path(entry.path))
-            continue
-
-        # Fallback: check starts with prefix directly
-        name_upper = entry.name.upper()
-        if (name_upper.startswith(f"{c_target}_{b_target}_") or
-            name_upper.startswith(f"{c_target}_{b_target}.") or
-            name_upper.startswith(f"{c_target}-{b_target}-")):
             matched.append(Path(entry.path))
 
     return sorted(matched)
@@ -169,8 +188,8 @@ def _norm_col(c):
     if m:
         return f"m_{m.group(1)}_{m.group(2)}"
     if _QCOL_RE.match(s):
-        return f"q_{s}"
-    return _RENAMES.get(s, s)
+        return f"q_{s.upper()}"
+    return _RENAMES.get(s.lower(), _RENAMES.get(s, s))
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -205,7 +224,7 @@ def load_tables(
     tables: dict[str, pd.DataFrame] = {}
     for f in files:
         xls = pd.ExcelFile(f, engine="openpyxl")
-        print(f"  → {f.name}  ({', '.join(xls.sheet_names)})")
+        print(f"  -> {f.name}  ({', '.join(xls.sheet_names)})")
         for s in xls.sheet_names:
             raw_df = pd.read_excel(xls, sheet_name=s)
             cleaned_df = _clean_dataframe(raw_df)
@@ -232,6 +251,19 @@ def _s(val):
     if pd.isna(val):
         return None
     return val.item() if hasattr(val, "item") else val
+
+
+def _is_one(val: Any) -> bool:
+    """Robust check for boolean / binary trigger flags (1, 1.0, True, '1')."""
+    if val is None or pd.isna(val):
+        return False
+    if isinstance(val, (pd.Series, pd.DataFrame)):
+        val = val.iloc[0] if len(val) > 0 else None
+        if val is None or pd.isna(val):
+            return False
+    if hasattr(val, "item"):
+        val = val.item()
+    return str(val).strip() in ("1", "1.0", "True", "true") or val == 1
 
 
 def _trend(row, months):
@@ -282,22 +314,23 @@ def _kri1(row, qi):
     t_q = _s(row.get("test_quarter")) or qi.test
     b_q = _s(row.get("base_quarter")) or qi.base
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
-        if _s(row.get(f"KRI_1_{sfx}")) != 1: continue
-        results.append(_strip({
-            "kri": "KRI_1",
-            "direction": label,
-            "test_quarter": t_q,
-            "base_quarter": b_q,
-            "test_quarter_count": _s(row.get("test_quarter_count")),
-            "base_quarter_count": _s(row.get("base_quarter_count")),
-            "difference": _s(row.get("test_base_quarter_diff")),
-            "full_period_avg_count": _s(row.get("full_period_avg(count)")),
-            "full_period_stddev_count": _s(row.get("full_period_stddev_pop(count)")),
-            "three_sigma_exceeded": _s(row.get(f"KRI_1_{sfx}_three_sigma_exceeded")),
-            "consecutive_trigger": _s(row.get(f"KRI_1_{sfx}_with_consecutive")),
-            "monthly_trend": _trend(row, qi.test_months),
-        }))
-    if not results and _s(row.get("KRI_1")) == 1:
+        col = f"KRI_1_{sfx}"
+        if col in row.index and _is_one(row.get(col)):
+            results.append(_strip({
+                "kri": "KRI_1",
+                "direction": label,
+                "test_quarter": t_q,
+                "base_quarter": b_q,
+                "test_quarter_count": _s(row.get("test_quarter_count")),
+                "base_quarter_count": _s(row.get("base_quarter_count")),
+                "difference": _s(row.get("test_base_quarter_diff")),
+                "full_period_avg_count": _s(row.get("full_period_avg(count)")),
+                "full_period_stddev_count": _s(row.get("full_period_stddev_pop(count)")),
+                "three_sigma_exceeded": _s(row.get(f"KRI_1_{sfx}_three_sigma_exceeded")),
+                "consecutive_trigger": _s(row.get(f"KRI_1_{sfx}_with_consecutive")),
+                "monthly_trend": _trend(row, qi.test_months),
+            }))
+    if not results and _is_one(row.get("KRI_1")):
         results.append(_strip({
             "kri": "KRI_1",
             "test_quarter": t_q,
@@ -335,21 +368,21 @@ def _kri3(row, qi):
     b_q = _s(row.get("base_quarter")) or qi.base
     for label, col in [("amount", "KRI_3_amount"), ("freq", "KRI_3_freq"),
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
-        if _s(row.get(col)) != 1: continue
-        results.append(_strip({
-            "kri": "KRI_3",
-            "sub_trigger": label,
-            "test_quarter": t_q,
-            "base_quarter": b_q,
-            "test_quarter_accum_ratio_amount": _s(row.get("test_quarter_accum_ratio_amount")),
-            "base_quarter_accum_ratio_amount": _s(row.get("base_quarter_accum_ratio_amount")),
-            "amount_deviation": _s(row.get("kri3_amount_deviation")),
-            "frequency_deviation": _s(row.get("kri3_freq_deviation")),
-            "alert_count": _s(row.get("alert_count")),
-            "false_positive_rate": _s(row.get("false_positive_rate")),
-            "true_positive_rate": _s(row.get("true_positive_rate")),
-        }))
-    if not results and _s(row.get("KRI_3")) == 1:
+        if col in row.index and _is_one(row.get(col)):
+            results.append(_strip({
+                "kri": "KRI_3",
+                "sub_trigger": label,
+                "test_quarter": t_q,
+                "base_quarter": b_q,
+                "test_quarter_accum_ratio_amount": _s(row.get("test_quarter_accum_ratio_amount")),
+                "base_quarter_accum_ratio_amount": _s(row.get("base_quarter_accum_ratio_amount")),
+                "amount_deviation": _s(row.get("kri3_amount_deviation")),
+                "frequency_deviation": _s(row.get("kri3_freq_deviation")),
+                "alert_count": _s(row.get("alert_count")),
+                "false_positive_rate": _s(row.get("false_positive_rate")),
+                "true_positive_rate": _s(row.get("true_positive_rate")),
+            }))
+    if not results and _is_one(row.get("KRI_3")):
         results.append(_strip({
             "kri": "KRI_3",
             "test_quarter": t_q,
@@ -381,38 +414,34 @@ def filter_kris(tables, qi):
     """Returns {alert_def: [evidence_dicts]} for all triggered KRIs."""
     results = {}
     for sheet, extractor in _KRIS.items():
-        if sheet not in tables: continue
+        if sheet not in tables:
+            continue
         df = tables[sheet]
-        if sheet not in df.columns: continue
+        if sheet not in df.columns:
+            continue
         df = df.reset_index(drop=True)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
-        triggered = df[df[sheet] == 1].reset_index(drop=True)
+            df = df[df["ingestion_quarter"].astype(str).str.strip().str.upper() == qi.ingestion.upper()].reset_index(drop=True)
+
+        triggered_mask = df[sheet].apply(_is_one)
+        triggered = df[triggered_mask].reset_index(drop=True)
         print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in quarter)")
 
         for _, row in triggered.iterrows():
-            # Benchmark period filtering:
-            # Benchmark quarter must always be before test_quarter and before base_quarter.
+            # Benchmark quarter filtering:
+            # If both base_quarter and benchmark_quarter exist, filter out rows where base_quarter > benchmark_quarter
             bench_val = None
-            for bcol in ("benchmark_quarter", "benchmark_period", "oldest_benchmark_period", "benchmark"):
-                if bcol in row.index and _s(row.get(bcol)) is not None:
+            for bcol in ("benchmark_quarter", "benchmark_period"):
+                if bcol in row.index and pd.notna(row.get(bcol)):
                     bench_val = _s(row.get(bcol))
                     break
 
             base_val = _s(row.get("base_quarter"))
-            test_val = _s(row.get("test_quarter"))
-
             if bench_val and base_val:
                 b_bench = _period_to_qnum(bench_val)
                 b_base = _period_to_qnum(base_val)
-                if b_bench is not None and b_base is not None and b_bench > b_base:
-                    continue  # Filter out: base_quarter is older than benchmark boundary
-
-            if bench_val and test_val:
-                b_bench = _period_to_qnum(bench_val)
-                b_test = _period_to_qnum(test_val)
-                if b_bench is not None and b_test is not None and b_bench > b_test:
-                    continue  # Filter out: test_quarter is older than benchmark boundary
+                if b_bench is not None and b_base is not None and b_base > b_bench:
+                    continue  # Filter out base_quarter higher than benchmark_quarter
 
             ad = str(row.get("alert_definition", "?"))
             meta = _strip({
@@ -470,7 +499,11 @@ _STRUCT_KPIS = {
 def _q_col(df, qi):
     for q in (qi.ingestion, qi.test):
         c = f"q_{q}"
-        if c in df.columns: return c
+        if c in df.columns:
+            return c
+        for col in df.columns:
+            if str(col).lower() == c.lower():
+                return col
     return None
 
 
@@ -483,7 +516,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         if sheet not in tables: continue
         df = tables[sheet].reset_index(drop=True)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
+            df = df[df["ingestion_quarter"].astype(str).str.strip().str.upper() == qi.ingestion.upper()].reset_index(drop=True)
         if "alert_definition" in df.columns:
             df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         qc = _q_col(df, qi)
@@ -505,7 +538,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         filt_col = cfg["filter"]
         filt_val = qi.test if filt_col == "test_quarter" else qi.ingestion
         if filt_col in df.columns:
-            df = df[df[filt_col] == filt_val].reset_index(drop=True)
+            df = df[df[filt_col].astype(str).str.strip().str.upper() == filt_val.upper()].reset_index(drop=True)
         if "alert_definition" in df.columns:
             df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
         if df.empty: continue
@@ -578,5 +611,5 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
     for name, data in [("quantitative_context", context), ("relevance_matrix", matrix)]:
         p = out / f"{prefix}_{name}.json"
         p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-        print(f"  → {p}")
+        print(f"  -> {p}")
     print(f"[Output] {len(context)} alert definition(s)")

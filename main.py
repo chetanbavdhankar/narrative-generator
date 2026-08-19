@@ -30,7 +30,7 @@ def main():
     print("[KRI Filtering]")
     kri_results = filter_kris(tables, qi)
     ads = set(kri_results)
-    print(f"  → {len(ads)} alert definition(s) with triggered KRI(s)\n")
+    print(f"  -> {len(ads)} alert definition(s) with triggered KRI(s)\n")
 
     # Enrich KPIs
     print("[KPI Enrichment]")

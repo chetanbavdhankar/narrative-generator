@@ -92,8 +92,19 @@ Input Excel Files (e.g. input/PL_RB_*.xlsx)
 
 ## 4. Input Filename Convention
 
-Files placed in the input folder must follow the format `<Country>_<BusinessLine>_<description>.xlsx`:
-- Examples: `PL_RB_kri.xlsx`, `PL_RB_kpi.xlsx`, `RO_WB_data.xlsx`, `FR_RB_2026.xlsx`
+Input files must include `<Country>_<BusinessLine>` separated by underscores (`_`) anywhere in the filename.
+
+- **Country**: 2 to 4 letter country code (e.g. `PL`, `RO`, `FR`, `DE`, `CH`, `NL`).
+- **Business Line**: Short or long format (case-insensitive):
+  - **RB** synonyms: `RB`, `Retail`, `Retail_Bank`, `Retail_Banking`, `RetailBank`, `RetailBanking`
+  - **WB** synonyms: `WB`, `Wholesale`, `Wholesale_Bank`, `Wholesale_Banking`, `WholesaleBank`, `WholesaleBanking`
+
+### Valid Examples
+- `PL_RB_kri.xlsx` $\rightarrow$ Country: `PL`, Business Line: `RB`
+- `2026_Q1_PL_retail_banking_kpi.xlsx` $\rightarrow$ Country: `PL`, Business Line: `RB`
+- `alert_data_RO_wholesale_bank.xlsx` $\rightarrow$ Country: `RO`, Business Line: `WB`
+- `FR_retail_2026.xlsx` $\rightarrow$ Country: `FR`, Business Line: `RB`
+- `data_CH_WB.xlsx` $\rightarrow$ Country: `CH`, Business Line: `WB`
 
 ---
 
