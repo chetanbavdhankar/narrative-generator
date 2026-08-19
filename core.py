@@ -235,7 +235,7 @@ def _s(val):
 
 
 def _trend(row, months):
-    return {f"m{i}": _s(row[f"m_{m.replace('-','_')}"])
+    return {f"month_{i}": _s(row[f"m_{m.replace('-','_')}"])
             for i, m in enumerate(months, 1)
             if f"m_{m.replace('-','_')}" in row.index and _s(row.get(f"m_{m.replace('-','_')}")) is not None}
 
@@ -247,11 +247,14 @@ def _identity(row):
 
 
 _FLAG_MAP = {
-    "many_alert_flag": "many_alert", "lowest_am_th_flag": "low_amt_th",
-    "lowest_freq_th_flag": "low_freq_th", "lowest_both_th_flag": "low_both_th",
-    "ths_changed_ad_flag": "th_changed", "ths_not_changed_ad_flag": "th_unchanged",
-    "deactivated_ad_flag": "deactivated",
-    "newly_active_ingestion_quarter_ad_flag": "newly_active",
+    "many_alert_flag": "many_alerts_flag",
+    "lowest_am_th_flag": "lowest_amount_threshold_flag",
+    "lowest_freq_th_flag": "lowest_frequency_threshold_flag",
+    "lowest_both_th_flag": "lowest_both_thresholds_flag",
+    "ths_changed_ad_flag": "thresholds_changed_flag",
+    "ths_not_changed_ad_flag": "thresholds_unchanged_flag",
+    "deactivated_ad_flag": "deactivated_flag",
+    "newly_active_ingestion_quarter_ad_flag": "newly_active_flag",
 }
 
 
@@ -265,7 +268,7 @@ def _thresholds(row):
     for c in ("current_min_amount_threshold", "current_min_freq_threshold"):
         v = _s(row.get(c))
         if v is not None:
-            out[c.replace("current_min_", "min_").replace("_threshold", "_th")] = v
+            out[c.replace("current_", "")] = v
     return out
 
 
@@ -281,27 +284,28 @@ def _kri1(row, qi):
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
         if _s(row.get(f"KRI_1_{sfx}")) != 1: continue
         results.append(_strip({
-            "kri": "KRI_1", "dir": label,
+            "kri": "KRI_1",
+            "direction": label,
             "test_quarter": t_q,
             "base_quarter": b_q,
-            "test_q_cnt": _s(row.get("test_quarter_count")),
-            "base_q_cnt": _s(row.get("base_quarter_count")),
-            "diff": _s(row.get("test_base_quarter_diff")),
-            "full_avg": _s(row.get("full_period_avg(count)")),
-            "full_std": _s(row.get("full_period_stddev_pop(count)")),
-            "3sigma": _s(row.get(f"KRI_1_{sfx}_three_sigma_exceeded")),
-            "consec": _s(row.get(f"KRI_1_{sfx}_with_consecutive")),
-            "trend": _trend(row, qi.test_months),
+            "test_quarter_count": _s(row.get("test_quarter_count")),
+            "base_quarter_count": _s(row.get("base_quarter_count")),
+            "difference": _s(row.get("test_base_quarter_diff")),
+            "full_period_avg_count": _s(row.get("full_period_avg(count)")),
+            "full_period_stddev_count": _s(row.get("full_period_stddev_pop(count)")),
+            "three_sigma_exceeded": _s(row.get(f"KRI_1_{sfx}_three_sigma_exceeded")),
+            "consecutive_trigger": _s(row.get(f"KRI_1_{sfx}_with_consecutive")),
+            "monthly_trend": _trend(row, qi.test_months),
         }))
     if not results and _s(row.get("KRI_1")) == 1:
         results.append(_strip({
             "kri": "KRI_1",
             "test_quarter": t_q,
             "base_quarter": b_q,
-            "test_q_cnt": _s(row.get("test_quarter_count")),
-            "base_q_cnt": _s(row.get("base_quarter_count")),
-            "diff": _s(row.get("test_base_quarter_diff")),
-            "trend": _trend(row, qi.test_months)
+            "test_quarter_count": _s(row.get("test_quarter_count")),
+            "base_quarter_count": _s(row.get("base_quarter_count")),
+            "difference": _s(row.get("test_base_quarter_diff")),
+            "monthly_trend": _trend(row, qi.test_months)
         }))
     return results
 
@@ -313,15 +317,15 @@ def _kri2(row, qi):
         "kri": "KRI_2",
         "test_quarter": t_q,
         "base_quarter": b_q,
-        "test_q_cnt": _s(row.get("test_quarter_count")),
-        "base_q_cnt": _s(row.get("base_quarter_count")),
-        "diff": _s(row.get("test_base_quarter_diff")),
-        "alert_cnt": _s(row.get("alert_count")),
-        "full_avg": _s(row.get("full_period_avg(productive_alerts_count)")),
-        "full_std": _s(row.get("full_period_stddev_pop(productive_alerts_count)")),
-        "3sigma": _s(row.get("KRI_2_dcrs_three_sigma_exceeded")),
-        "consec": _s(row.get("KRI_2_dcrs_with_consecutive")),
-        "trend": _trend(row, qi.test_months),
+        "test_quarter_count": _s(row.get("test_quarter_count")),
+        "base_quarter_count": _s(row.get("base_quarter_count")),
+        "difference": _s(row.get("test_base_quarter_diff")),
+        "alert_count": _s(row.get("alert_count")),
+        "full_period_avg_productive_alerts": _s(row.get("full_period_avg(productive_alerts_count)")),
+        "full_period_stddev_productive_alerts": _s(row.get("full_period_stddev_pop(productive_alerts_count)")),
+        "three_sigma_exceeded": _s(row.get("KRI_2_dcrs_three_sigma_exceeded")),
+        "consecutive_trigger": _s(row.get("KRI_2_dcrs_with_consecutive")),
+        "monthly_trend": _trend(row, qi.test_months),
     })]
 
 
@@ -333,25 +337,26 @@ def _kri3(row, qi):
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
         if _s(row.get(col)) != 1: continue
         results.append(_strip({
-            "kri": "KRI_3", "sub": label,
+            "kri": "KRI_3",
+            "sub_trigger": label,
             "test_quarter": t_q,
             "base_quarter": b_q,
-            "test_accum_amt": _s(row.get("test_quarter_accum_ratio_amount")),
-            "base_accum_amt": _s(row.get("base_quarter_accum_ratio_amount")),
-            "dev_amt": _s(row.get("kri3_amount_deviation")),
-            "dev_freq": _s(row.get("kri3_freq_deviation")),
-            "alert_cnt": _s(row.get("alert_count")),
-            "fpr": _s(row.get("false_positive_rate")),
-            "tpr": _s(row.get("true_positive_rate")),
+            "test_quarter_accum_ratio_amount": _s(row.get("test_quarter_accum_ratio_amount")),
+            "base_quarter_accum_ratio_amount": _s(row.get("base_quarter_accum_ratio_amount")),
+            "amount_deviation": _s(row.get("kri3_amount_deviation")),
+            "frequency_deviation": _s(row.get("kri3_freq_deviation")),
+            "alert_count": _s(row.get("alert_count")),
+            "false_positive_rate": _s(row.get("false_positive_rate")),
+            "true_positive_rate": _s(row.get("true_positive_rate")),
         }))
     if not results and _s(row.get("KRI_3")) == 1:
         results.append(_strip({
             "kri": "KRI_3",
             "test_quarter": t_q,
             "base_quarter": b_q,
-            "alert_cnt": _s(row.get("alert_count")),
-            "fpr": _s(row.get("false_positive_rate")),
-            "tpr": _s(row.get("true_positive_rate"))
+            "alert_count": _s(row.get("alert_count")),
+            "false_positive_rate": _s(row.get("false_positive_rate")),
+            "true_positive_rate": _s(row.get("true_positive_rate"))
         }))
     return results
 
@@ -361,11 +366,11 @@ def _kri6(row, qi):
     return [_strip({
         "kri": "KRI_6",
         "test_quarter": t_q,
-        "test_q_alerts": _s(row.get("test_quarter_alert_count")),
-        "test_q_m1_alerts": _s(row.get("test_quarter_minus_1_alert_count")),
-        "test_q_m2_alerts": _s(row.get("test_quarter_minus_2_alert_count")),
-        "total": _s(row.get("total_count")),
-        "oldest_bench": _s(row.get("oldest_benchmark_period")),
+        "test_quarter_alerts": _s(row.get("test_quarter_alert_count")),
+        "test_quarter_minus_1_alerts": _s(row.get("test_quarter_minus_1_alert_count")),
+        "test_quarter_minus_2_alerts": _s(row.get("test_quarter_minus_2_alert_count")),
+        "total_monitoring_alerts": _s(row.get("total_count")),
+        "oldest_benchmark_period": _s(row.get("oldest_benchmark_period")),
     })]
 
 
@@ -426,25 +431,38 @@ def filter_kris(tables, qi):
 # ── KPI enrichment ──────────────────────────────────────────────────────────
 
 _SIMPLE_KPIS = {
-    "KPI_1": "kpi1_alerts", "KPI_2b": "kpi2b_prod", "KPI_3": "kpi3_cust",
-    "KPI_6": "kpi6_val", "KPI_11": "kpi11_val", "KPI_12": "kpi12_val",
-    "KPI_15a": "kpi15a_val", "KPI_15b": "kpi15b_val",
-    "KPI_16": "kpi16_uniq_cust", "KPI_17": "kpi17_val",
+    "KPI_1": "kpi1_alert_count",
+    "KPI_2b": "kpi2b_productive_alert_rate",
+    "KPI_3": "kpi3_customer_count",
+    "KPI_6": "kpi6_value",
+    "KPI_11": "kpi11_value",
+    "KPI_12": "kpi12_value",
+    "KPI_15a": "kpi15a_value",
+    "KPI_15b": "kpi15b_value",
+    "KPI_16": "kpi16_unique_customers",
+    "KPI_17": "kpi17_value",
 }
 
 _STRUCT_KPIS = {
     "KPI_17_quarter": {
-        "filter": "test_quarter", "key": "kpi17q",
-        "cols": {"alert_count": "alert_cnt", "tp_count": "tp_cnt",
-                 "false_positive_rate": "fpr", "general_overlap_ratio": "overlap",
-                 "prod_general_overlap_ratio": "prod_overlap"},
+        "filter": "test_quarter", "key": "kpi17_quarterly_metrics",
+        "cols": {
+            "alert_count": "alert_count",
+            "tp_count": "true_positive_count",
+            "false_positive_rate": "false_positive_rate",
+            "general_overlap_ratio": "general_overlap_ratio",
+            "prod_general_overlap_ratio": "productive_overlap_ratio",
+        },
     },
     "KPI_18_quarter": {
-        "filter": "test_quarter", "key": "kpi18q",
-        "cols": {"alert_count": "alert_cnt", "tp_count": "tp_cnt",
-                 "min_amount_threshold": "min_amt_th",
-                 "max_amount_threshold": "max_amt_th",
-                 "min_frequency_threshold": "min_freq_th"},
+        "filter": "test_quarter", "key": "kpi18_quarterly_thresholds",
+        "cols": {
+            "alert_count": "alert_count",
+            "tp_count": "true_positive_count",
+            "min_amount_threshold": "min_amount_threshold",
+            "max_amount_threshold": "max_amount_threshold",
+            "min_frequency_threshold": "min_frequency_threshold",
+        },
     },
 }
 
@@ -536,8 +554,6 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
             quarters_summary["base"] = evaluated_base_quarters[0]
         elif evaluated_base_quarters:
             quarters_summary["base_quarters"] = evaluated_base_quarters
-        else:
-            quarters_summary["base"] = qi.base
 
         block["quarters"] = quarters_summary
         block["triggered_kris"] = evidences
@@ -550,7 +566,7 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         subs = {}
         for ev in evidences:
             k = ev.get("kri", "")
-            s = ev.get("sub") or ev.get("dir")
+            s = ev.get("sub_trigger") or ev.get("direction")
             if s: subs.setdefault(k, []).append(s)
         entry = {"alert_definition": ad, "triggered_kris": kris}
         if any(subs.values()): entry["kri_sub_triggers"] = subs

@@ -116,13 +116,13 @@ Abbreviation-dense context payload formatted for direct local LLM ingestion (~80
       "customer_risk": "HIGH"
     },
     "thresholds": {
-      "min_amt_th": 15000,
-      "min_freq_th": 5
+      "min_amount_threshold": 15000,
+      "min_frequency_threshold": 5
     },
     "flags": {
-      "many_alert": 1,
-      "low_amt_th": 0,
-      "th_changed": 0
+      "many_alerts_flag": 1,
+      "lowest_amount_threshold_flag": 0,
+      "thresholds_changed_flag": 0
     },
     "quarters": {
       "ingestion": "Q1_2026",
@@ -132,27 +132,29 @@ Abbreviation-dense context payload formatted for direct local LLM ingestion (~80
     "triggered_kris": [
       {
         "kri": "KRI_1",
-        "dir": "increase",
-        "test_q_cnt": 142,
-        "base_q_cnt": 85,
-        "diff": 57,
-        "full_avg": 90.2,
-        "full_std": 12.4,
-        "3sigma": 1,
-        "consec": 1,
-        "trend": { "m1": 40, "m2": 48, "m3": 54 }
+        "direction": "increase",
+        "test_quarter": "Q3_2025",
+        "base_quarter": "Q2_2025",
+        "test_quarter_count": 142,
+        "base_quarter_count": 85,
+        "difference": 57,
+        "full_period_avg_count": 90.2,
+        "full_period_stddev_count": 12.4,
+        "three_sigma_exceeded": 1,
+        "consecutive_trigger": 1,
+        "monthly_trend": { "month_1": 40, "month_2": 48, "month_3": 54 }
       }
     ],
     "recommendation": "Review threshold adjustment",
     "kpi_context": {
-      "kpi1_alerts": 142,
-      "kpi2b_prod": 18.5,
-      "kpi3_cust": 110,
-      "kpi17q": {
-        "alert_cnt": 142,
-        "tp_cnt": 26,
-        "fpr": 0.817,
-        "overlap": 0.12
+      "kpi1_alert_count": 142,
+      "kpi2b_productive_alert_rate": 18.5,
+      "kpi3_customer_count": 110,
+      "kpi17_quarterly_metrics": {
+        "alert_count": 142,
+        "true_positive_count": 26,
+        "false_positive_rate": 0.817,
+        "general_overlap_ratio": 0.12
       }
     }
   },
@@ -166,37 +168,53 @@ Abbreviation-dense context payload formatted for direct local LLM ingestion (~80
       "customer_risk": "MEDIUM"
     },
     "thresholds": {
-      "min_amt_th": 25000,
-      "min_freq_th": 8
+      "min_amount_threshold": 25000,
+      "min_frequency_threshold": 8
     },
     "flags": {
-      "many_alert": 0,
-      "th_changed": 0
+      "many_alerts_flag": 0,
+      "thresholds_changed_flag": 0
     },
     "quarters": {
       "ingestion": "Q1_2026",
       "test": "Q3_2025",
-      "base": "Q2_2025"
+      "base_quarters": ["Q1_2025", "Q2_2025"]
     },
     "triggered_kris": [
       {
         "kri": "KRI_2",
-        "test_q_cnt": 8,
-        "base_q_cnt": 34,
-        "diff": -26,
-        "alert_cnt": 220,
-        "full_avg": 31.5,
-        "full_std": 6.8,
-        "3sigma": 1,
-        "consec": 1,
-        "trend": { "m1": 4, "m2": 2, "m3": 2 }
+        "test_quarter": "Q3_2025",
+        "base_quarter": "Q2_2025",
+        "test_quarter_count": 8,
+        "base_quarter_count": 34,
+        "difference": -26,
+        "alert_count": 220,
+        "full_period_avg_productive_alerts": 31.5,
+        "full_period_stddev_productive_alerts": 6.8,
+        "three_sigma_exceeded": 1,
+        "consecutive_trigger": 1,
+        "monthly_trend": { "month_1": 4, "month_2": 2, "month_3": 2 }
+      },
+      {
+        "kri": "KRI_2",
+        "test_quarter": "Q3_2025",
+        "base_quarter": "Q1_2025",
+        "test_quarter_count": 8,
+        "base_quarter_count": 40,
+        "difference": -32,
+        "alert_count": 220,
+        "full_period_avg_productive_alerts": 31.5,
+        "full_period_stddev_productive_alerts": 6.8,
+        "three_sigma_exceeded": 1,
+        "consecutive_trigger": 1,
+        "monthly_trend": { "month_1": 4, "month_2": 2, "month_3": 2 }
       }
     ],
     "recommendation": "Investigate drop in true productive alerts",
     "kpi_context": {
-      "kpi1_alerts": 220,
-      "kpi2b_prod": 3.6,
-      "kpi3_cust": 185
+      "kpi1_alert_count": 220,
+      "kpi2b_productive_alert_rate": 3.6,
+      "kpi3_customer_count": 185
     }
   },
   {
@@ -209,43 +227,45 @@ Abbreviation-dense context payload formatted for direct local LLM ingestion (~80
       "customer_risk": "MEDIUM"
     },
     "thresholds": {
-      "min_amt_th": 50000,
-      "min_freq_th": 10
+      "min_amount_threshold": 50000,
+      "min_frequency_threshold": 10
     },
     "flags": {
-      "many_alert": 0,
-      "th_changed": 1
+      "many_alerts_flag": 0,
+      "thresholds_changed_flag": 1
     },
     "quarters": {
       "ingestion": "Q1_2026",
-      "test": "Q3_2025",
-      "base": "Q2_2025"
+      "test": "Q3_2025"
     },
     "triggered_kris": [
       {
         "kri": "KRI_3",
-        "sub": "amount",
-        "test_accum_amt": 1250000.0,
-        "base_accum_amt": 820000.0,
-        "dev_amt": 0.524,
-        "alert_cnt": 38,
-        "fpr": 0.658,
-        "tpr": 0.342
+        "sub_trigger": "amount",
+        "test_quarter": "Q3_2025",
+        "base_quarter": "Q2_2025",
+        "test_quarter_accum_ratio_amount": 1250000.0,
+        "base_quarter_accum_ratio_amount": 820000.0,
+        "amount_deviation": 0.524,
+        "alert_count": 38,
+        "false_positive_rate": 0.658,
+        "true_positive_rate": 0.342
       },
       {
         "kri": "KRI_6",
-        "test_q_alerts": 38,
-        "test_q_m1_alerts": 35,
-        "test_q_m2_alerts": 30,
-        "total": 103,
-        "oldest_bench": "2024-01"
+        "test_quarter": "Q3_2025",
+        "test_quarter_alerts": 0,
+        "test_quarter_minus_1_alerts": 0,
+        "test_quarter_minus_2_alerts": 0,
+        "total_monitoring_alerts": 103,
+        "oldest_benchmark_period": "2024-01"
       }
     ],
     "recommendation": "Maintain active monitoring",
     "kpi_context": {
-      "kpi1_alerts": 38,
-      "kpi6_val": 3.4,
-      "kpi16_uniq_cust": 29
+      "kpi1_alert_count": 38,
+      "kpi6_value": 3.4,
+      "kpi16_unique_customers": 29
     }
   }
 ]
@@ -266,6 +286,9 @@ Lightweight lookup mapping allowing prompt builders to look up and inject only r
         "increase"
       ]
     },
+    "evaluated_base_quarters": [
+      "Q2_2025"
+    ],
     "available_kpis": [
       "KPI_1",
       "KPI_2b",
@@ -277,6 +300,10 @@ Lightweight lookup mapping allowing prompt builders to look up and inject only r
     "alert_definition": "AD_PL_RB_002",
     "triggered_kris": [
       "KRI_2"
+    ],
+    "evaluated_base_quarters": [
+      "Q1_2025",
+      "Q2_2025"
     ],
     "available_kpis": [
       "KPI_1",
@@ -295,6 +322,9 @@ Lightweight lookup mapping allowing prompt builders to look up and inject only r
         "amount"
       ]
     },
+    "evaluated_base_quarters": [
+      "Q2_2025"
+    ],
     "available_kpis": [
       "KPI_1",
       "KPI_6",
