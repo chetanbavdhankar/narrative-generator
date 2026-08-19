@@ -207,7 +207,8 @@ def _norm_col(c):
         return f"m_{m.group(1)}_{m.group(2)}"
     if _QCOL_RE.match(s):
         return f"q_{format_quarter(s)}"
-    return _RENAMES.get(s.lower(), _RENAMES.get(s, s))
+    cleaned = s.lower().replace(" ", "_").replace("-", "_")
+    return _RENAMES.get(cleaned, _RENAMES.get(s.lower(), _RENAMES.get(s, s)))
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
