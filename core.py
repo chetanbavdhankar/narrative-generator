@@ -706,22 +706,22 @@ def decode_alert_definition(ad: str) -> dict[str, Any] | None:
 KRI_SPECIFICATIONS: dict[str, dict[str, str]] = {
     "KRI_1": {
         "title": "Deviation in Alert Volume",
-        "description": "Measures unusual shifts in total alert volume vs base quarter. Dual-component: (1) 1-3 stddev delta + >=50 alerts (Retail) / >=30 (Wholesale) over >=2 consecutive quarters; (2) >=3 stddev delta + >=50 (Retail) / >=30 (Wholesale) in single quarter.",
+        "description": "Measures alert volume shift vs base quarter. Triggers if: [1-3 std dev + absolute change >=50 (RB) / >=30 (WB) for >=2 consecutive quarters] OR [>=3 std dev + absolute change >=50 (RB) / >=30 (WB) in 1 quarter].",
         "diagnostic_focus": "Customer behaviour shifts, population drift, data quality/ingestion glitches, threshold changes, or emerging typology waves.",
     },
     "KRI_2": {
         "title": "Deviation in True Positive Volume",
-        "description": "Measures downward reduction in productive alerts (True Positives) vs base quarter. Dual-component: (1) Downward 1-3 stddev + >=15 decrease (Retail) / >=10 (Wholesale) over >=2 consecutive quarters; (2) Downward >=3 stddev + >=15 (Retail) / >=10 (Wholesale) in single quarter.",
+        "description": "Measures productive alert volume drop vs base quarter. Triggers if: [Downward 1-3 std dev + drop >=15 (RB) / >=10 (WB) for >=2 consecutive quarters] OR [Downward >=3 std dev + drop >=15 (RB) / >=10 (WB) in 1 quarter].",
         "diagnostic_focus": "Reduced detection capability, control degradation, or decaying threshold calibration.",
     },
     "KRI_3": {
         "title": "Accumulation of Escalations in Proximity",
-        "description": "Measures concentration of productive True Positive alerts near threshold boundaries. Dual-component: (1) 10-50 percentage points proximity deviation + 5-10 TPs over >=2 consecutive quarters; (2) >=50 percentage points deviation + >=10 TPs in single quarter.",
+        "description": "Measures productive alert clustering near threshold boundaries vs base quarter. Triggers if: [10-50% proximity shift + 5-10 TPs for >=2 consecutive quarters] OR [>=50% proximity shift + >=10 TPs in 1 quarter].",
         "diagnostic_focus": "Threshold boundary sensitivity; indicates whether minor threshold adjustments will capture or shed major productive volume.",
     },
     "KRI_6": {
         "title": "Dormant Alert Definition Identification",
-        "description": "Binary check identifying definitions active for >=3 consecutive quarters that subsequently generate zero alerts across 3 consecutive evaluation quarters.",
+        "description": "Measures rule dormancy. Triggers if: [Active for >=3 consecutive quarters and subsequently produces 0 alerts for 3 consecutive quarters].",
         "diagnostic_focus": "Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets.",
     },
 }
@@ -851,8 +851,8 @@ def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
                 ("difference", f"{prefix} Difference (Test - Base)"),
                 ("full_period_avg_count", f"{prefix} Full Period Avg Count"),
                 ("full_period_stddev_count", f"{prefix} Full Period Stddev"),
-                ("three_sigma_exceeded", f"{prefix} 3-Sigma Exceeded (Component 2)"),
-                ("consecutive_trigger", f"{prefix} Consecutive Trigger (Component 1)"),
+                ("three_sigma_exceeded", f"{prefix} >=3-Sigma Exceeded (Single Quarter)"),
+                ("consecutive_trigger", f"{prefix} Consecutive Trigger (>=2 Quarters)"),
                 ("alert_count", f"{prefix} Total Alerts Evaluated"),
                 ("test_quarter_accum_ratio_amount", f"{prefix} Test Proximity Accum Ratio"),
                 ("base_quarter_accum_ratio_amount", f"{prefix} Base Proximity Accum Ratio"),
