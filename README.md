@@ -1,49 +1,41 @@
 # Transaction Monitoring (TM) Narrative Generator
 
-A complete, end-to-end ETL and prompt engineering framework for Transaction Monitoring (TM) Model Governance. It converts raw quarterly Excel workbooks and scenario catalogs into audit-grade, evidence-backed root cause hypotheses and executive narratives ($\le 400$ words) with strict data lineage citations.
+A lightweight, unified ETL and prompt framework for Transaction Monitoring (TM) Model Governance. It processes quarterly Excel workbooks, enriches alert definitions with quantitative KPIs and qualitative scenario detection logic from `scenarios.json`, decodes alert taxonomy (`ABCD.123.SS.RR.XY`), and generates **one single enriched Markdown dossier output file** ready for 2-step LLM governance narrative generation.
 
 ---
 
-## 1. End-to-End Pipeline Workflow
-
-The governance pipeline operates in three consecutive, modular stages:
+## 1. End-to-End Workflow Architecture
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 1: Quantitative Ingestion & Dossier Serialization                    │
-│   • Core Engine: core.py / main.py / app.py                                │
-│   • Inputs: Excel Workbooks (e.g. input/PL_RB_kri.xlsx)                    │
-│   • Logic: Evaluates KRI 1, 2, 3, 6 triggers, enriches KPIs (1, 2b, 3, etc)│
-│   • Decodes: AD Taxonomy (ABCD.123.SS.RR.XY -> Segment, Risk, Period)      │
-│   • Output: Quantitative Markdown Dossiers (output/<run>_dossiers.md)      │
+│ 1. INGESTION & UNIFIED DOSSIER GENERATOR (core.py / main.py / app.py)      │
+│   • Quantitative Inputs: Country Excel Files (e.g. input/PL_RB_*.xlsx)     │
+│   • Qualitative Input: Global Scenarios Catalog (e.g. scenarios.json)      │
+│   • Automated Processing:                                                  │
+│     - Resolves evaluation quarters (Ingestion / Test / Base)               │
+│     - Evaluates KRI 1, 2, 3, 6 triggers                                    │
+│     - Enriches KPI metrics (KPI 1, 2b, 3, 6, 11, 12, 15a/b, 16, 17, 18)   │
+│     - Decodes AD Taxonomy (Segment SS, Risk RR, Monitoring Window XY)      │
+│     - Injects Qualitative Scenario Logic (<scenario_detection_logic>)      │
+│   • Output: ONE Single Enriched Dossier (output/<COUNTRY>_<BL>_dossiers.md)│
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       │
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 2: Qualitative Scenario & Control Logic Enrichment                   │
-│   • Enricher: scenario_enrichment/enricher.py                              │
-│   • Inputs: Quantitative Dossiers + scenarios.json                         │
-│   • Logic: Maps scenario key (AAAA.NNN), injects typology, detection logic,│
-│     and alert trigger criteria inside <scenario_detection_logic>           │
-│   • Output: Enriched Dossiers (output/<run>_dossiers_enriched.md)          │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 3: 2-Step LLM Governance & Narrative Generation                      │
-│   • Prompts: prompts/hypothesis_prompt.md & prompts/narrative_prompt.md    │
+│ 2. TWO-STEP LLM GOVERNANCE NARRATIVE SYNTHESIS (prompts/)                  │
 │   • Step 1: Hypothesis Formulation (prompts/hypothesis_prompt.md)          │
 │     - Falsifiable Hypothesis + 3-5 Cited Evidence Points                   │
 │     - Unbroken Causal Chain + Alternative Explanations Evaluation          │
-│   • Step 2: Executive Narrative (prompts/narrative_prompt.md, <= 400 words)│
+│   • Step 2: Executive Root Cause Narrative (prompts/narrative_prompt.md)   │
+│     - Strict <= 400 words ceiling                                          │
 │     - Observation -> Analysis -> Deterministic Action Recommendation       │
-│     - Deterministic Actions: NO ACTION / RECALIBRATE / RE-BAND / DECOM     │
+│     - Standard Actions: NO ACTION / RECALIBRATE / RE-BAND / DECOM          │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Quickstart: Step-by-Step Execution (From Scratch to Narrative)
+## 2. Quickstart Execution Guide
 
 ### Prerequisites
 ```bash
@@ -52,81 +44,67 @@ pip install -r requirements.txt
 
 ---
 
-### Step 1: Generate Quantitative Model Dossiers
-
-Choose one of the following execution methods:
-
-#### Option A: Interactive Web UI (Recommended)
+### Option A: Interactive Web UI (Recommended)
 Double-click [`start.bat`](start.bat) on Windows or execute:
 ```bash
 python app.py --port 5000
 ```
 - Open `http://localhost:5000` in your web browser.
-- **Browse** to select input/output directories.
-- Click **Scan** to group portfolios by Country / Business Line, select files, and click **Run Pipeline**.
-
-#### Option B: Command Line Interface (CLI)
-```bash
-python main.py --country PL --business-line RB --ingestion-quarter Q1_2026
-```
-*(Outputs saved to `output/PL_RB_Q1_2026_dossiers.md` and `output/per_model/`)*
+- **Select Folders**: Browse and choose your input folder and output directory.
+- **Select Scenario File**: Select your country-agnostic `scenarios.json` file (pre-filled by default).
+- Click **Scan Folder** to detect and select countries/business lines.
+- Click **Run Pipeline** $\rightarrow$ Generates **one single enriched Markdown dossier** per selected country portfolio in `output/`.
 
 ---
 
-### Step 2: Inject Qualitative Scenario & Control Logic
-
-Run the standalone scenario enricher to map qualitative detection rules from `scenarios.json`:
-
+### Option B: Command Line Interface (CLI)
 ```bash
-# Enrich a single consolidated dossier file:
-python scenario_enrichment/enricher.py \
+python main.py \
+  --country PL \
+  --business-line RB \
+  --ingestion-quarter Q1_2026 \
   --scenarios-file scenarios.json \
-  --dossier-input output/PL_RB_Q1_2026_dossiers.md \
-  --output-target output/PL_RB_Q1_2026_dossiers_enriched.md
-
-# Or enrich an entire directory of per-model dossiers:
-python scenario_enrichment/enricher.py \
-  --scenarios-file scenarios.json \
-  --dossier-input output/per_model \
-  --output-target output/per_model_enriched
+  --input-dir input/ \
+  --output-dir output/
 ```
+*(Generates `output/PL_RB_Q1_2026_dossiers.md` as the single consolidated output file).*
 
 ---
 
-### Step 3: Run the 2-Step LLM Prompt Prompts
+### Option C: Running the 2-Step LLM Prompts
 
-The [`prompts/`](prompts/) directory contains the two standardized prompt templates:
-
-#### Stage 3.1: Formulate Hypothesis (`prompts/hypothesis_prompt.md`)
+#### Stage 1: Formulate Hypothesis (`prompts/hypothesis_prompt.md`)
 1. Open [`prompts/hypothesis_prompt.md`](prompts/hypothesis_prompt.md).
-2. Append the target model dossier block (`<model id="..."> ... </model>`) to the prompt.
-3. Pass to the LLM to generate the 4-part structured hypothesis (Primary hypothesis statement, cited evidence, causal chain, and counter-evidence check).
+2. Append the target model dossier block (`<model id="..."> ... </model>`) from your generated `_dossiers.md` file.
+3. Pass to the LLM to produce the structured hypothesis (Primary hypothesis statement, cited evidence points, step-by-step causal chain, and counter-evidence check).
 
-#### Stage 3.2: Generate Executive Narrative (`prompts/narrative_prompt.md`)
+#### Stage 2: Generate Executive Narrative (`prompts/narrative_prompt.md`)
 1. Open [`prompts/narrative_prompt.md`](prompts/narrative_prompt.md).
-2. Append the model dossier block and the generated hypothesis from Stage 3.1.
-3. Pass to the LLM to generate the executive root cause narrative ($\le 400$ words) structured into **Observation**, **Analysis**, and **Conclusion & Action Recommendation**.
+2. Append the model dossier block and the generated hypothesis from Stage 1.
+3. Pass to the LLM to generate the final executive root-cause narrative ($\le 400$ words) structured into **Observation**, **Analysis**, and **Conclusion & Action Recommendation**.
 
 ---
 
 ## 3. Project Structure & Components
 
-| Module / Path | Role | Description |
-|---|---|---|
-| [`core.py`](core.py) | **ETL & Dossier Engine** | Excel ingestion, quarter arithmetic, KRI filtering, KPI vectorization, taxonomy decoding, and XML-tagged Markdown serialization. |
-| [`scenario_enrichment/`](scenario_enrichment/) | **Qualitative Enricher** | Standalone module to load `scenarios.json` and inject `<scenario_detection_logic>` into dossiers. |
-| [`prompts/hypothesis_prompt.md`](prompts/hypothesis_prompt.md) | **Step 1 Prompt** | Formulates falsifiable hypothesis, evidence citations, causal chain, and alternative explanation evaluation. |
-| [`prompts/narrative_prompt.md`](prompts/narrative_prompt.md) | **Step 2 Prompt** | Produces dense, audit-ready executive narrative ($\le 400$ words) with Observation, Analysis, and deterministic Governance Action. |
-| [`app.py`](app.py) | **Web Server & UI** | Flask app with embedded dashboard for scanning and running pipeline runs. |
-| [`main.py`](main.py) | **CLI Entry Point** | Command-line runner for batch country/business line processing. |
-| [`start.bat`](start.bat) | **Windows Launcher** | Zero-config batch script to launch the web dashboard. |
-| [`run.ipynb`](run.ipynb) | **Jupyter Notebook** | Interactive notebook for batch execution and experimentation. |
+```text
+narrative_generator/
+├── core.py                   # Core ETL, taxonomy decoding & unified dossier serialization engine
+├── app.py                    # Web UI with native folder/file pickers and batch country runner
+├── main.py                   # CLI entry point for batch processing
+├── start.bat                 # Windows one-click launcher for app.py
+├── prompts/
+│   ├── hypothesis_prompt.md  # Step 1: Hypothesis, evidence & causal chain prompt
+│   └── narrative_prompt.md   # Step 2: Executive root cause narrative prompt (<= 400 words)
+├── requirements.txt          # Dependencies (pandas, openpyxl, flask)
+└── README.md                 # Complete documentation and user guide
+```
 
 ---
 
 ## 4. Alert Definition Taxonomy Standards (`ABCD.123.SS.RR.XY`)
 
-Alert definition codes are automatically parsed into their constituent governance parameters:
+Alert definitions are automatically decoded at the model header level:
 
 ### Segment Mapping (`SS`)
 | Code | CTC | Segment Name | Line of Business |
@@ -173,7 +151,7 @@ Alert definition codes are automatically parsed into their constituent governanc
 
 ---
 
-## 5. KRI Governance Evaluation Rules
+## 5. KRI Evaluation Rules & Governance Actions
 
 | Indicator | Title | Trigger Evaluation Rule (Boolean OR) | Diagnostic Focus |
 |---|---|---|---|
@@ -182,17 +160,9 @@ Alert definition codes are automatically parsed into their constituent governanc
 | **KRI 3** | Accumulation in Threshold Proximity | `[10-50% proximity shift + 5-10 TPs for >=2 consecutive quarters]`<br>**OR**<br>`[>=50% proximity shift + >=10 TPs in 1 quarter]` | Threshold boundary sensitivity; indicates if small threshold adjustments will capture or shed major productive volume. |
 | **KRI 6** | Dormant Alert Definition Identification | `[Active for >=3 consecutive quarters and subsequently produces 0 alerts for 3 consecutive quarters]` | Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets. |
 
----
-
-## 6. Deterministic Action Taxonomy for Narratives
-
-The LLM is strictly constrained in Step 2 to select exactly one of the 4 governance actions:
-
-1. `[ACTION: NO ACTION REQUIRED]`
-   - Justification: Deactivated model, expected burn-in period for newly active rule, post-change re-baseline, or temporary volume fluctuation with healthy conversion rates (KPI 2b).
-2. `[ACTION: RECALIBRATE / TIGHTEN THRESHOLD]`
-   - Justification: Alert volume explosion (KRI 1) accompanied by collapsing True Positive rates (KRI 2 / KPI 2b), indicating excessive noise.
-3. `[ACTION: RE-BAND / ADJUST PROXIMITY BOUNDARY]`
-   - Justification: Escalation clustering near boundary limits (KRI 3), indicating parameter sensitivity or customer structuring.
-4. `[ACTION: DECOMMISSION / CONSOLIDATE]`
-   - Justification: Prolonged zero-volume dormancy across $\ge 3$ evaluation quarters (KRI 6) where typology coverage is superseded by another control (retained only if serving as a critical Terrorist Financing / Sanctions safety net).
+### Deterministic Action Decisions
+The LLM selects exactly one of the 4 standard governance actions:
+1. `[ACTION: NO ACTION REQUIRED]` (Deactivated model, expected burn-in, post-change re-baseline, or justifiable business surge with healthy conversion).
+2. `[ACTION: RECALIBRATE / TIGHTEN THRESHOLD]` (Volume surge with low/decaying true positive conversion).
+3. `[ACTION: RE-BAND / ADJUST PROXIMITY BOUNDARY]` (Productive alerts clustering near threshold limits).
+4. `[ACTION: DECOMMISSION / CONSOLIDATE]` (Prolonged dormancy across $\ge 3$ quarters unless serving as critical TF/Sanctions safety net).

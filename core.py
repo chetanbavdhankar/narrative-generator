@@ -727,6 +727,110 @@ KRI_SPECIFICATIONS: dict[str, dict[str, str]] = {
 }
 
 
+# ── Scenario Qualitative Detection Logic Standards ─────────────────────────
+
+def extract_scenario_code(ad: str) -> str | None:
+    """Extract standard 8-char control code (e.g. 'CHQD.058') from an alert definition."""
+    if not ad: return None
+    s = str(ad).strip()
+    if len(s) >= 8 and s[:4].isalpha() and s[4] in (".", "_", "-") and s[5:8].isdigit():
+        return f"{s[:4].upper()}.{s[5:8]}"
+    m = re.search(r"([A-Za-z]{3,5}[\.\-_ ]\d{3})", s)
+    return m.group(1).upper().replace("_", ".").replace("-", ".") if m else None
+
+
+def load_scenarios_catalog(filepath: str | Path | None) -> tuple[dict[str, Any], str]:
+    """Load and normalize scenario catalog from root or nested 'models'/'scenarios' key."""
+    if not filepath:
+        return {}, ""
+    p = Path(str(filepath).strip(' "\''))
+    if not p.exists() or not p.is_file():
+        return {}, ""
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        catalog = raw.get("models") or raw.get("scenarios") or raw.get("controls") or (raw if isinstance(raw, dict) else {})
+        norm = {}
+        for k, v in catalog.items():
+            if isinstance(v, dict):
+                k_str = str(k).strip()
+                k_std = extract_scenario_code(k_str) or k_str.upper()
+                norm[k_std] = v
+                norm[k_str.upper()] = v
+        return norm, p.name
+    except Exception as e:
+        print(f"  [Warning] Failed to load scenarios catalog from {p}: {e}")
+        return {}, p.name
+
+
+def format_scenario_detection_logic(code: str, info: dict[str, Any], source: str, ad_id: str | None = None) -> str:
+    """Format scenario/control qualitative detection logic and alert generation rules."""
+    esc = lambda v: str(v or "—").strip().replace("|", "\\|").replace("\n", " ")
+    lines = [
+        "<scenario_detection_logic>",
+        f"## Parent Scenario & Control Specification: {code}",
+        "",
+        "> **Context for LLM:** This section defines the parent scenario detection mechanics governing how individual transaction monitoring alerts are triggered. While individual Alert Definitions apply specific segment/risk thresholds, the rules below define the core financial crime typology, focal entity scope, transaction aggregation, and alert generation criteria.",
+        "",
+        "| Scenario Dimension | Specification | Source |",
+        "|---|---|---|",
+        f"| Typology Description | {esc(info.get('Typology'))} | {source} |",
+        f"| Financial Crime Risk Type | {esc(info.get('Risk Type'))} | {source} |",
+        f"| Focal Entity Level | {esc(info.get('Focal Entity'))} | {source} |",
+        f"| Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |",
+    ]
+
+    decoded = decode_alert_definition(ad_id) if ad_id else None
+    if decoded:
+        lines.append(f"| Configured Segment Scope | {esc(decoded['segment_name'])} (CTC: {decoded['customer_type_code']}) [{decoded['line_of_business']}] [Code: {decoded['segment_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"| Configured Customer Risk | {esc(decoded['risk_name'])} [Code: {decoded['risk_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"| Configured Monitoring Window | {esc(decoded['period_alias'])} - {esc(decoded['period_description'])} [Code: {decoded['period_code']}] | AD_Taxonomy_Standard |")
+    lines.append("")
+
+    if info.get("Conditions"):
+        lines.extend([
+            "### 1. Target Population & Applicability Conditions",
+            "Defines customer segments, entity types, and classification filters required for this control to evaluate activity:",
+            info["Conditions"].strip(),
+            ""
+        ])
+
+    if info.get("How to detect"):
+        lines.extend([
+            "### 2. Transaction Profiling & Aggregation Logic",
+            "Defines how the monitoring engine profiles customer activity and aggregates transactional volume/value:",
+            info["How to detect"].strip(),
+            ""
+        ])
+
+    if info.get("FCRM will generate an alert if"):
+        lines.extend([
+            "### 3. Single Alert Trigger Criteria",
+            "Defines the exact conditional rule that evaluates aggregated metrics to fire a single transaction monitoring alert:",
+            info["FCRM will generate an alert if"].strip(),
+            ""
+        ])
+
+    if info.get("FCRM Scenario Logic"):
+        lines.extend([
+            "### 4. Technical Scenario Logic",
+            info["FCRM Scenario Logic"].strip(),
+            ""
+        ])
+
+    profiles = info.get("Solution Definition Profiles", [])
+    if profiles:
+        lines.append("### 5. In-Scope Transaction Profiles")
+        for p in profiles:
+            p_name = p.get("profile", "—")
+            tc = ", ".join(p.get("transaction_code", [])) or "—"
+            dc = ", ".join(p.get("debit_credit", [])) or "—"
+            lines.append(f"- **Profile `{p_name}`**: Transaction Codes: `[{tc}]` | Flow Direction: `[{dc}]`")
+        lines.append("")
+
+    lines.append("</scenario_detection_logic>")
+    return "\n".join(lines)
+
+
 # ── Markdown Dossier Serialization ─────────────────────────────────────────
 
 def _escape_md(val: Any) -> str:
@@ -740,7 +844,11 @@ def _format_metric_row(metric: str, val: Any, source: str) -> str:
     return f"    | {_escape_md(metric)} | {_escape_md(val)} | {_escape_md(source)} |"
 
 
-def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
+def serialize_dossier_markdown(
+    ad_block: dict[str, Any],
+    scenarios_catalog: dict[str, Any] | None = None,
+    scenario_source: str = "scenarios.json"
+) -> str:
     """Serialize a single alert definition data block into an LLM-optimized XML-tagged Markdown dossier."""
     ad = ad_block.get("alert_definition", "UNKNOWN")
     identity = ad_block.get("identity", {})
@@ -920,41 +1028,39 @@ def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
         parts.append("  </domain>\n")
 
     parts.append("</structured_metrics>\n")
+
+    # 8. Qualitative Scenario Detection Logic (Injected if available)
+    if scenarios_catalog:
+        scen_code = extract_scenario_code(ad)
+        info = scenarios_catalog.get(scen_code) or scenarios_catalog.get(ad.strip().upper())
+        if info:
+            logic_md = format_scenario_detection_logic(scen_code or ad, info, scenario_source, ad_id=ad)
+            parts.append(logic_md + "\n")
+
     parts.append("</model>\n")
     return "\n".join(parts)
 
 
-def serialize_relevance_matrix_markdown(matrix: list[dict[str, Any]], country: str, bl: str, quarter: str) -> str:
-    """Serialize the alert definition trigger relevance matrix to a Markdown table."""
-    lines = [
-        f"# Transaction Monitoring Relevance Matrix — {country.upper()}/{bl.upper()} ({quarter})\n",
-        "| Alert Definition | Triggered KRIs | Trigger Details | Available KPIs |",
-        "|---|---|---|---|",
-    ]
-    for row in matrix:
-        ad = _escape_md(row.get("alert_definition", ""))
-        kris = _escape_md(", ".join(row.get("triggered_kris", [])))
-        subs = []
-        for k, vals in row.get("kri_sub_triggers", {}).items():
-            subs.append(f"{k}: {', '.join(vals)}")
-        subs_str = _escape_md("; ".join(subs) if subs else "Standard")
-        kpis = _escape_md(", ".join(row.get("available_kpis", [])) or "None")
-        lines.append(f"| {ad} | {kris} | {subs_str} | {kpis} |")
-    return "\n".join(lines) + "\n"
-
-
 # ── Context assembly ────────────────────────────────────────────────────────
 
-def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
+def build_output(
+    kri_results: dict[str, list[dict[str, Any]]],
+    kpi_data: dict[str, dict[str, Any]],
+    kpi_avail: dict[str, list[str]],
+    qi: Any,
+    output_dir: str | Path,
+    country: str,
+    bl: str,
+    scenarios_file: str | Path | None = None
+) -> Path:
+    """Assemble and write one single enriched Markdown dossier output file for all triggered models."""
     out = Path(str(output_dir).strip(' "\''))
     out.mkdir(parents=True, exist_ok=True)
-    per_model_dir = out / "per_model"
-    per_model_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{country.upper()}_{bl.upper()}_{qi.ingestion}"
 
-    context, matrix = [], []
-    dossier_markdowns = []
+    scenarios_catalog, scenario_src_name = load_scenarios_catalog(scenarios_file)
 
+    dossier_markdowns = []
     for ad, evidences in sorted(kri_results.items()):
         meta = {}
         for ev in evidences:
@@ -967,7 +1073,6 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         for k in ("identity", "thresholds", "flags"):
             if meta.get(k): block[k] = meta[k]
 
-        # Extract unique evaluated base and test quarters across evidences
         evaluated_base_quarters = sorted({ev["base_quarter"] for ev in evidences if "base_quarter" in ev})
         evaluated_test_quarters = sorted({ev["test_quarter"] for ev in evidences if "test_quarter" in ev})
 
@@ -985,45 +1090,15 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         rec = meta.get("final_recommendation") or meta.get("recommendation")
         if rec: block["recommendation"] = rec
         if ad in kpi_data: block["kpi_context"] = kpi_data[ad]
-        context.append(block)
 
-        # Generate individual XML-tagged Markdown Dossier
-        md_content = serialize_dossier_markdown(block)
+        # Generate XML-tagged Markdown Dossier with scenario enrichment
+        md_content = serialize_dossier_markdown(block, scenarios_catalog, scenario_src_name or "scenarios.json")
         dossier_markdowns.append(md_content)
 
-        safe_name = ad.lower().replace(" ", "_").replace("/", "_").replace("\\", "_")
-        single_dossier_path = per_model_dir / f"{safe_name}_dossier.md"
-        single_dossier_path.write_text(md_content, encoding="utf-8")
-
-        kris = sorted({ev.get("kri", "") for ev in evidences})
-        subs = {}
-        for ev in evidences:
-            k = ev.get("kri", "")
-            s = ev.get("sub_trigger") or ev.get("direction")
-            if s: subs.setdefault(k, []).append(s)
-        entry = {"alert_definition": ad, "triggered_kris": kris}
-        if any(subs.values()): entry["kri_sub_triggers"] = subs
-        if evaluated_base_quarters:
-            entry["evaluated_base_quarters"] = evaluated_base_quarters
-        entry["available_kpis"] = kpi_avail.get(ad, [])
-        matrix.append(entry)
-
-    # Write Combined Dossiers Markdown
+    # Write ONLY ONE SINGLE OUTPUT FILE for all models
     combined_dossier_path = out / f"{prefix}_dossiers.md"
     combined_dossier_path.write_text("\n\n".join(dossier_markdowns), encoding="utf-8")
-    print(f"  -> [Dossiers Markdown] {combined_dossier_path}")
-    print(f"  -> [Per-Model Dossiers] {len(context)} files in {per_model_dir}")
+    print(f"  -> [Single Dossier Output] {combined_dossier_path} ({len(dossier_markdowns)} model(s) included)")
 
-    # Write Markdown Relevance Matrix Table
-    matrix_md_path = out / f"{prefix}_relevance_matrix.md"
-    matrix_md_path.write_text(serialize_relevance_matrix_markdown(matrix, country, bl, qi.ingestion), encoding="utf-8")
-    print(f"  -> [Relevance Matrix MD] {matrix_md_path}")
-
-    # Backward compatibility: Write JSON payloads
-    for name, data in [("quantitative_context", context), ("relevance_matrix", matrix)]:
-        p = out / f"{prefix}_{name}.json"
-        p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-        print(f"  -> [JSON Payload] {p}")
-
-    print(f"[Output] Generated dossiers for {len(context)} alert definition(s)")
+    return combined_dossier_path
 

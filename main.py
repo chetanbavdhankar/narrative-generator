@@ -13,7 +13,7 @@ def main():
     ap.add_argument("--business-line", required=True, help="Business line (e.g. RB, WB)")
     ap.add_argument("--ingestion-quarter", required=True, help="Ingestion quarter (e.g. Q1_2026)")
     ap.add_argument("--input-dir", default="input/", help="Directory containing Excel workbooks (default: input/)")
-    ap.add_argument("--output-dir", default="output/", help="Directory for generated dossier markdown and JSON files (default: output/)")
+    ap.add_argument("--scenarios-file", default=None, help="Optional path to scenarios.json catalog for qualitative detection logic enrichment")
     args = ap.parse_args()
     t0 = time.perf_counter()
 
@@ -39,7 +39,7 @@ def main():
     # Build output
     print("\n[Building output]")
     build_output(kri_results, kpi_data, kpi_avail, qi, args.output_dir,
-                 args.country, args.business_line)
+                 args.country, args.business_line, scenarios_file=args.scenarios_file)
 
     print(f"\n[Done] {time.perf_counter() - t0:.1f}s")
 

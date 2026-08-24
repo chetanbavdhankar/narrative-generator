@@ -42,12 +42,40 @@ def _pick_folder() -> str:
         return ""
 
 
+def _pick_file() -> str:
+    """Launch Tkinter file dialog in a separate subprocess so Flask never hangs."""
+    script = (
+        "import tkinter as tk, tkinter.filedialog as fd; "
+        "root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); "
+        "f=fd.askopenfilename(title='Select Scenarios JSON File', filetypes=[('JSON Files', '*.json'), ('All Files', '*.*')]); "
+        "print(f); root.destroy()"
+    )
+    try:
+        res = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return res.stdout.strip()
+    except Exception as e:
+        print(f"[Browse File Error] {e}")
+        return ""
+
+
 # ── API routes ──────────────────────────────────────────────────────────────
 
 @app.get("/api/browse")
 def browse():
     """Open native folder picker, return selected path."""
     path = _pick_folder()
+    return jsonify({"path": path})
+
+
+@app.get("/api/browse_file")
+def browse_file():
+    """Open native file picker for scenarios JSON, return selected path."""
+    path = _pick_file()
     return jsonify({"path": path})
 
 
@@ -103,6 +131,7 @@ def run_pipeline():
     input_dir = str(data.get("input_dir", "")).strip(' "\'')
     output_dir = str(data.get("output_dir", "")).strip(' "\'')
     quarter = str(data.get("ingestion_quarter", "")).strip()
+    scenarios_file = str(data.get("scenarios_file", "")).strip(' "\'') or None
     combos = data.get("combos", [])
 
     if not input_dir:
@@ -132,12 +161,14 @@ def run_pipeline():
             kri_results = filter_kris(tables, qi)
             ads = set(kri_results)
             kpi_data, kpi_avail = enrich_kpis(tables, ads, qi)
-            build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl)
+            out_file = build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl, scenarios_file=scenarios_file)
             results.append({
                 "label": label,
                 "status": "ok",
                 "triggered": len(ads),
-                "files_count": len(chosen_files)
+                "files_count": len(chosen_files),
+                "output_file": out_file.name,
+                "output_path": str(out_file),
             })
         except Exception as e:
             results.append({"label": label, "status": "error", "message": str(e)})
@@ -254,10 +285,17 @@ input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent);cursor:
 
   <!-- Parameters -->
   <div class="card">
-    <h2>⚙️ Parameters</h2>
+    <h2>⚙️ Parameters & Scenarios</h2>
     <div class="field">
       <label>Ingestion Quarter</label>
       <input id="quarter" placeholder="Q1_2026" value="Q1_2026" />
+    </div>
+    <div class="field">
+      <label>Global Scenarios Catalog (JSON — Country Agnostic)</label>
+      <div class="row">
+        <input id="scenariosFile" placeholder="Optional: scenarios.json path (e.g. scenarios.json)" value="scenarios.json" />
+        <button class="btn btn-browse" onclick="browseFile('scenariosFile')">Browse File</button>
+      </div>
     </div>
     <div class="field">
       <label>Output Directory</label>
@@ -295,6 +333,20 @@ async function browse(targetId) {
     }
   } finally {
     if (btn) btn.textContent = 'Browse';
+  }
+}
+
+async function browseFile(targetId) {
+  const btn = event?.target;
+  if (btn) btn.textContent = 'Opening...';
+  try {
+    const r = await fetch('/api/browse_file');
+    const d = await r.json();
+    if (d.path) {
+      document.getElementById(targetId).value = d.path;
+    }
+  } finally {
+    if (btn) btn.textContent = 'Browse File';
   }
 }
 
@@ -470,6 +522,7 @@ async function run() {
         input_dir: document.getElementById('inputDir').value,
         output_dir: document.getElementById('outputDir').value,
         ingestion_quarter: document.getElementById('quarter').value,
+        scenarios_file: document.getElementById('scenariosFile').value,
         combos
       })
     });
@@ -495,6 +548,10 @@ async function run() {
           <span style="color:var(--text2);margin-left:8px;font-size:0.84rem">
             ${res.status === 'ok' ? `(${res.triggered} alert definitions with triggered KRIs from ${res.files_count} file(s))` : `(${res.message})`}
           </span>
+          ${res.status === 'ok' ? `
+            <div style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--accent2);margin-top:6px">
+              📄 Output: <b>${res.output_file}</b>
+            </div>` : ''}
         </div>
         <span class="badge ${res.status}">${res.status === 'ok' ? '✓ DONE' : '✗ FAILED'}</span>
       </div>
