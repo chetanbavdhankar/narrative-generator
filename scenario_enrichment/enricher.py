@@ -31,7 +31,81 @@ def load_scenarios(filepath: str | Path) -> dict[str, Any]:
     return norm
 
 
-def format_functional_block(code: str, info: dict[str, Any], source: str) -> str:
+SEGMENT_MAPPING: dict[str, dict[str, str]] = {
+    "01": {"ctc": "FI", "name": "Financial Institution", "lob": "Wholesale (WB)"},
+    "02": {"ctc": "LARGE", "name": "Large Corporation", "lob": "Wholesale (WB)"},
+    "03": {"ctc": "SMALL / OTHER", "name": "Small Corporation / Other Wholesale Banking Entity", "lob": "Wholesale (WB)"},
+    "04": {"ctc": "MIDCORP", "name": "Medium Corporation", "lob": "Retail (RB)"},
+    "05": {"ctc": "SME", "name": "Small-Medium Entity", "lob": "Retail (RB)"},
+    "06": {"ctc": "PRIVATE", "name": "Private Individual", "lob": "Retail (RB)"},
+    "07": {"ctc": "PRIBA", "name": "Private Banking", "lob": "Retail (RB)"},
+    "08": {"ctc": "FI, LARGE, WBCORP, SMALL, OTHER, MEDIUM", "name": "Wholesale Banking Customer (Combined 01, 02, 03, 60)", "lob": "Wholesale (WB)"},
+    "09": {"ctc": "MIDCORP, SME, CI (XL-XS), NCI (XL-XS)", "name": "Retail - Entity (Combined 04, 05, 13-22)", "lob": "Retail (RB)"},
+    "10": {"ctc": "PRIVATE, PRIBA, IND (LT-VHT)", "name": "Retail - Individual (Combined 06, 07, 24-27)", "lob": "Retail (RB)"},
+    "11": {"ctc": "All Retail Entities & Individuals", "name": "Retail Banking Customer (Combined 04-07, 13-22, 24-27)", "lob": "Retail (RB)"},
+    "12": {"ctc": "All WB & RB Entities & Individuals", "name": "Universal Banking Customer (Combined 01-07, 13-22, 24-27, 60)", "lob": "Universal (UB = WB + RB)"},
+    "13": {"ctc": "CI-XL", "name": "Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "14": {"ctc": "CI-L", "name": "Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "15": {"ctc": "CI-M", "name": "Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "16": {"ctc": "CI-S", "name": "Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "17": {"ctc": "CI-XS", "name": "Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "18": {"ctc": "NCI-XL", "name": "Non-Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "19": {"ctc": "NCI-L", "name": "Non-Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "20": {"ctc": "NCI-M", "name": "Non-Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "21": {"ctc": "NCI-S", "name": "Non-Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "22": {"ctc": "NCI-XS", "name": "Non-Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "23": {"ctc": "CI (XL-XS), NCI (XL-XS)", "name": "Cash and Non-Cash Intensive Entities (Combined 13-22)", "lob": "Retail (RB)"},
+    "24": {"ctc": "INDLT", "name": "Individual - Low Turnover", "lob": "Retail (RB)"},
+    "25": {"ctc": "INDMT", "name": "Individual - Medium Turnover", "lob": "Retail (RB)"},
+    "26": {"ctc": "INDHT", "name": "Individual - High Turnover", "lob": "Retail (RB)"},
+    "27": {"ctc": "INDVHT", "name": "Individual - Very High Turnover", "lob": "Retail (RB)"},
+    "60": {"ctc": "MEDIUM", "name": "Medium Corporation", "lob": "Wholesale (WB)"},
+}
+
+RISK_MAPPING: dict[str, str] = {
+    "00": "All Risks (Combined 01 High, 02 Medium, 03 Low)",
+    "01": "High Risk",
+    "02": "Medium Risk",
+    "03": "Low Risk",
+    "04": "Medium/Low Risk (Combined 02 Medium, 03 Low)",
+}
+
+PERIOD_MAPPING: dict[str, dict[str, str]] = {
+    "TD": {"alias": "Today", "description": "1 day transaction activity"},
+    "TDY": {"alias": "Today + Yesterday", "description": "2 days transaction activity"},
+    "TW": {"alias": "This Week", "description": "1 calendar week (Mon-Sun, 1-7 days)"},
+    "TWLW": {"alias": "This Week + Last Week", "description": "2 calendar weeks (8-14 days)"},
+    "TM": {"alias": "This Month", "description": "1 calendar month"},
+    "TMLM": {"alias": "This Month + Last Month", "description": "2 calendar months (current + preceding month)"},
+    "TQ": {"alias": "This Quarter", "description": "1 calendar quarter (90-92 days)"},
+    "TQLQ": {"alias": "This Quarter + Last Quarter", "description": "2 calendar quarters (current + preceding quarter)"},
+    "RP": {"alias": "Rolling Period", "description": "Rolling window (This Month + N Last Months)"},
+}
+
+_AD_TAXONOMY_RE = re.compile(
+    r"([A-Za-z]{3,5}\.\d{3})[\.\-_](\d{2})[\.\-_](\d{2})[\.\-_]([A-Za-z]{2,4})",
+    re.IGNORECASE
+)
+
+
+def decode_alert_definition(ad: str) -> dict[str, Any] | None:
+    """Decode standard alert definition structure ABCD.123.SS.RR.XY into taxonomy attributes."""
+    if not ad: return None
+    m = _AD_TAXONOMY_RE.search(str(ad).strip())
+    if not m: return None
+    scenario, seg_code, risk_code, period_code = m.group(1).upper(), m.group(2), m.group(3), m.group(4).upper()
+    seg_info = SEGMENT_MAPPING.get(seg_code, {})
+    risk_info = RISK_MAPPING.get(risk_code, f"Risk Code {risk_code}")
+    period_info = PERIOD_MAPPING.get(period_code, {"alias": period_code, "description": period_code})
+    return {
+        "scenario_code": scenario, "segment_code": seg_code, "segment_name": seg_info.get("name", f"Segment {seg_code}"),
+        "customer_type_code": seg_info.get("ctc", "—"), "line_of_business": seg_info.get("lob", "—"),
+        "risk_code": risk_code, "risk_name": risk_info,
+        "period_code": period_code, "period_alias": period_info.get("alias", period_code), "period_description": period_info.get("description", period_code),
+    }
+
+
+def format_functional_block(code: str, info: dict[str, Any], source: str, ad_id: str | None = None) -> str:
     """Format scenario/control qualitative detection logic and alert generation rules."""
     esc = lambda v: str(v or "—").strip().replace("|", "\\|").replace("\n", " ")
     lines = [
@@ -45,8 +119,15 @@ def format_functional_block(code: str, info: dict[str, Any], source: str) -> str
         f"| Typology Description | {esc(info.get('Typology'))} | {source} |",
         f"| Financial Crime Risk Type | {esc(info.get('Risk Type'))} | {source} |",
         f"| Focal Entity Level | {esc(info.get('Focal Entity'))} | {source} |",
-        f"| Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |\n",
+        f"| Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |",
     ]
+
+    decoded = decode_alert_definition(ad_id) if ad_id else None
+    if decoded:
+        lines.append(f"| Configured Segment Scope | {esc(decoded['segment_name'])} (CTC: {decoded['customer_type_code']}) [{decoded['line_of_business']}] [Code: {decoded['segment_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"| Configured Customer Risk | {esc(decoded['risk_name'])} [Code: {decoded['risk_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"| Configured Monitoring Window | {esc(decoded['period_alias'])} - {esc(decoded['period_description'])} [Code: {decoded['period_code']}] | AD_Taxonomy_Standard |")
+    lines.append("")
 
     if info.get("Conditions"):
         lines.extend([
@@ -105,7 +186,7 @@ def enrich(dossier_content: str, catalog: dict[str, Any], source_name: str) -> t
         info = catalog.get(code) or catalog.get(ad_id.strip().upper())
         if not info: return block
         count += 1
-        fn_md = format_functional_block(code or ad_id, info, source_name)
+        fn_md = format_functional_block(code or ad_id, info, source_name, ad_id=ad_id)
         idx = block.rfind("</model>")
         return block[:idx] + f"{fn_md}\n\n" + block[idx:] if idx != -1 else f"{block}\n\n{fn_md}"
 

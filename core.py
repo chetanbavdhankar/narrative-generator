@@ -615,6 +615,118 @@ def enrich_kpis(tables, triggered_ads, qi):
     return data, avail
 
 
+# ── Alert Definition Taxonomy Standards (ABCD.123.SS.RR.XY) ─────────────────
+
+SEGMENT_MAPPING: dict[str, dict[str, str]] = {
+    "01": {"ctc": "FI", "name": "Financial Institution", "lob": "Wholesale (WB)"},
+    "02": {"ctc": "LARGE", "name": "Large Corporation", "lob": "Wholesale (WB)"},
+    "03": {"ctc": "SMALL / OTHER", "name": "Small Corporation / Other Wholesale Banking Entity", "lob": "Wholesale (WB)"},
+    "04": {"ctc": "MIDCORP", "name": "Medium Corporation", "lob": "Retail (RB)"},
+    "05": {"ctc": "SME", "name": "Small-Medium Entity", "lob": "Retail (RB)"},
+    "06": {"ctc": "PRIVATE", "name": "Private Individual", "lob": "Retail (RB)"},
+    "07": {"ctc": "PRIBA", "name": "Private Banking", "lob": "Retail (RB)"},
+    "08": {"ctc": "FI, LARGE, WBCORP, SMALL, OTHER, MEDIUM", "name": "Wholesale Banking Customer (Combined 01, 02, 03, 60)", "lob": "Wholesale (WB)"},
+    "09": {"ctc": "MIDCORP, SME, CI (XL-XS), NCI (XL-XS)", "name": "Retail - Entity (Combined 04, 05, 13-22)", "lob": "Retail (RB)"},
+    "10": {"ctc": "PRIVATE, PRIBA, IND (LT-VHT)", "name": "Retail - Individual (Combined 06, 07, 24-27)", "lob": "Retail (RB)"},
+    "11": {"ctc": "All Retail Entities & Individuals", "name": "Retail Banking Customer (Combined 04-07, 13-22, 24-27)", "lob": "Retail (RB)"},
+    "12": {"ctc": "All WB & RB Entities & Individuals", "name": "Universal Banking Customer (Combined 01-07, 13-22, 24-27, 60)", "lob": "Universal (UB = WB + RB)"},
+    "13": {"ctc": "CI-XL", "name": "Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "14": {"ctc": "CI-L", "name": "Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "15": {"ctc": "CI-M", "name": "Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "16": {"ctc": "CI-S", "name": "Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "17": {"ctc": "CI-XS", "name": "Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "18": {"ctc": "NCI-XL", "name": "Non-Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "19": {"ctc": "NCI-L", "name": "Non-Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "20": {"ctc": "NCI-M", "name": "Non-Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "21": {"ctc": "NCI-S", "name": "Non-Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "22": {"ctc": "NCI-XS", "name": "Non-Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "23": {"ctc": "CI (XL-XS), NCI (XL-XS)", "name": "Cash and Non-Cash Intensive Entities (Combined 13-22)", "lob": "Retail (RB)"},
+    "24": {"ctc": "INDLT", "name": "Individual - Low Turnover", "lob": "Retail (RB)"},
+    "25": {"ctc": "INDMT", "name": "Individual - Medium Turnover", "lob": "Retail (RB)"},
+    "26": {"ctc": "INDHT", "name": "Individual - High Turnover", "lob": "Retail (RB)"},
+    "27": {"ctc": "INDVHT", "name": "Individual - Very High Turnover", "lob": "Retail (RB)"},
+    "60": {"ctc": "MEDIUM", "name": "Medium Corporation", "lob": "Wholesale (WB)"},
+}
+
+RISK_MAPPING: dict[str, str] = {
+    "00": "All Risks (Combined 01 High, 02 Medium, 03 Low)",
+    "01": "High Risk",
+    "02": "Medium Risk",
+    "03": "Low Risk",
+    "04": "Medium/Low Risk (Combined 02 Medium, 03 Low)",
+}
+
+PERIOD_MAPPING: dict[str, dict[str, str]] = {
+    "TD": {"alias": "Today", "description": "1 day transaction activity"},
+    "TDY": {"alias": "Today + Yesterday", "description": "2 days transaction activity"},
+    "TW": {"alias": "This Week", "description": "1 calendar week (Mon-Sun, 1-7 days)"},
+    "TWLW": {"alias": "This Week + Last Week", "description": "2 calendar weeks (8-14 days)"},
+    "TM": {"alias": "This Month", "description": "1 calendar month"},
+    "TMLM": {"alias": "This Month + Last Month", "description": "2 calendar months (current + preceding month)"},
+    "TQ": {"alias": "This Quarter", "description": "1 calendar quarter (90-92 days)"},
+    "TQLQ": {"alias": "This Quarter + Last Quarter", "description": "2 calendar quarters (current + preceding quarter)"},
+    "RP": {"alias": "Rolling Period", "description": "Rolling window (This Month + N Last Months)"},
+}
+
+_AD_TAXONOMY_RE = re.compile(
+    r"([A-Za-z]{3,5}\.\d{3})[\.\-_](\d{2})[\.\-_](\d{2})[\.\-_]([A-Za-z]{2,4})",
+    re.IGNORECASE
+)
+
+
+def decode_alert_definition(ad: str) -> dict[str, Any] | None:
+    """Decode standard alert definition structure ABCD.123.SS.RR.XY into taxonomy attributes."""
+    if not ad:
+        return None
+    m = _AD_TAXONOMY_RE.search(str(ad).strip())
+    if not m:
+        return None
+
+    scenario, seg_code, risk_code, period_code = m.group(1).upper(), m.group(2), m.group(3), m.group(4).upper()
+    seg_info = SEGMENT_MAPPING.get(seg_code, {})
+    risk_info = RISK_MAPPING.get(risk_code, f"Risk Code {risk_code}")
+    period_info = PERIOD_MAPPING.get(period_code, {"alias": period_code, "description": period_code})
+
+    return {
+        "scenario_code": scenario,
+        "segment_code": seg_code,
+        "segment_name": seg_info.get("name", f"Segment {seg_code}"),
+        "customer_type_code": seg_info.get("ctc", "—"),
+        "line_of_business": seg_info.get("lob", "—"),
+        "risk_code": risk_code,
+        "risk_name": risk_info,
+        "period_code": period_code,
+        "period_alias": period_info.get("alias", period_code),
+        "period_description": period_info.get("description", period_code),
+    }
+
+
+# ── KRI Reference Definitions ───────────────────────────────────────────────
+
+KRI_SPECIFICATIONS: dict[str, dict[str, str]] = {
+    "KRI_1": {
+        "title": "Deviation in Alert Volume",
+        "description": "Measures unusual shifts in total alert volume vs base quarter. Dual-component: (1) 1-3 stddev delta + >=50 alerts (Retail) / >=30 (Wholesale) over >=2 consecutive quarters; (2) >=3 stddev delta + >=50 (Retail) / >=30 (Wholesale) in single quarter.",
+        "diagnostic_focus": "Customer behaviour shifts, population drift, data quality/ingestion glitches, threshold changes, or emerging typology waves.",
+    },
+    "KRI_2": {
+        "title": "Deviation in True Positive Volume",
+        "description": "Measures downward reduction in productive alerts (True Positives) vs base quarter. Dual-component: (1) Downward 1-3 stddev + >=15 decrease (Retail) / >=10 (Wholesale) over >=2 consecutive quarters; (2) Downward >=3 stddev + >=15 (Retail) / >=10 (Wholesale) in single quarter.",
+        "diagnostic_focus": "Reduced detection capability, control degradation, or decaying threshold calibration.",
+    },
+    "KRI_3": {
+        "title": "Accumulation of Escalations in Proximity",
+        "description": "Measures concentration of productive True Positive alerts near threshold boundaries. Dual-component: (1) 10-50 percentage points proximity deviation + 5-10 TPs over >=2 consecutive quarters; (2) >=50 percentage points deviation + >=10 TPs in single quarter.",
+        "diagnostic_focus": "Threshold boundary sensitivity; indicates whether minor threshold adjustments will capture or shed major productive volume.",
+    },
+    "KRI_6": {
+        "title": "Dormant Alert Definition Identification",
+        "description": "Binary check identifying definitions active for >=3 consecutive quarters that subsequently generate zero alerts across 3 consecutive evaluation quarters.",
+        "diagnostic_focus": "Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets.",
+    },
+}
+
+
 # ── Markdown Dossier Serialization ─────────────────────────────────────────
 
 def _escape_md(val: Any) -> str:
@@ -649,12 +761,22 @@ def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
     parts.append('  <domain name="identity">')
     parts.append("    | Metric | Value | Source |")
     parts.append("    |--------|-------|--------|")
+
+    # Decode standard taxonomy structure ABCD.123.SS.RR.XY
+    decoded = decode_alert_definition(ad)
+    if decoded:
+        parts.append(_format_metric_row("Control Scenario Code", decoded["scenario_code"], "AD_Taxonomy_Standard"))
+        parts.append(_format_metric_row("Target Segment", f"{decoded['segment_name']} (CTC: {decoded['customer_type_code']}) [Code: {decoded['segment_code']}]", "AD_Taxonomy_Standard"))
+        parts.append(_format_metric_row("Line of Business", decoded["line_of_business"], "AD_Taxonomy_Standard"))
+        parts.append(_format_metric_row("Customer Risk Tier", f"{decoded['risk_name']} [Code: {decoded['risk_code']}]", "AD_Taxonomy_Standard"))
+        parts.append(_format_metric_row("Monitoring Evaluation Window", f"{decoded['period_alias']} ({decoded['period_description']}) [Code: {decoded['period_code']}]", "AD_Taxonomy_Standard"))
+
     id_labels = [
         ("country", "Country"),
         ("business_line", "Business Line"),
-        ("segment_desc", "Segment Description"),
-        ("customer_type_code", "Customer Type Code"),
-        ("customer_risk", "Customer Risk"),
+        ("segment_desc", "Segment Description (Reported)"),
+        ("customer_type_code", "Customer Type Code (Reported)"),
+        ("customer_risk", "Customer Risk (Reported)"),
     ]
     for k, label in id_labels:
         if k in identity and identity[k]:
@@ -700,19 +822,28 @@ def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
             parts.append(_format_metric_row(label, v, default_src))
         parts.append("  </domain>\n")
 
-    # 5. Triggered KRIs Domain
+    # 5. Triggered KRIs Domain (Annotated with Governance Definitions)
     if triggered_kris:
         parts.append('  <domain name="triggered_kris">')
         parts.append("    | Metric | Value | Source |")
         parts.append("    |--------|-------|--------|")
         for ev in triggered_kris:
-            kri_name = ev.get("kri", "KRI")
+            kri_key = ev.get("kri", "KRI")
+            spec = KRI_SPECIFICATIONS.get(kri_key, {})
+            kri_title = spec.get("title", kri_key)
             ev_src = ev.get("source", default_src)
-            prefix = f"{kri_name}"
+
+            prefix = f"{kri_key}: {kri_title}"
             if "direction" in ev:
-                prefix += f" ({ev['direction']})"
+                prefix += f" [{ev['direction'].upper()}]"
             elif "sub_trigger" in ev:
-                prefix += f" ({ev['sub_trigger']})"
+                prefix += f" [{ev['sub_trigger'].upper()}]"
+
+            # Indicator Definition & Evaluation Logic Rows
+            if spec.get("description"):
+                parts.append(_format_metric_row(f"{kri_key} Evaluation Rule", spec["description"], "TM_Governance_Policy"))
+            if spec.get("diagnostic_focus"):
+                parts.append(_format_metric_row(f"{kri_key} Diagnostic Focus", spec["diagnostic_focus"], "TM_Governance_Policy"))
 
             for field, label in [
                 ("test_quarter_count", f"{prefix} Test Quarter Count"),
@@ -720,27 +851,27 @@ def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
                 ("difference", f"{prefix} Difference (Test - Base)"),
                 ("full_period_avg_count", f"{prefix} Full Period Avg Count"),
                 ("full_period_stddev_count", f"{prefix} Full Period Stddev"),
-                ("three_sigma_exceeded", f"{prefix} 3-Sigma Exceeded"),
-                ("consecutive_trigger", f"{prefix} Consecutive Trigger"),
-                ("alert_count", f"{prefix} Alert Count"),
-                ("test_quarter_accum_ratio_amount", f"{prefix} Test Accum Ratio"),
-                ("base_quarter_accum_ratio_amount", f"{prefix} Base Accum Ratio"),
-                ("amount_deviation", f"{prefix} Amount Deviation"),
-                ("frequency_deviation", f"{prefix} Frequency Deviation"),
+                ("three_sigma_exceeded", f"{prefix} 3-Sigma Exceeded (Component 2)"),
+                ("consecutive_trigger", f"{prefix} Consecutive Trigger (Component 1)"),
+                ("alert_count", f"{prefix} Total Alerts Evaluated"),
+                ("test_quarter_accum_ratio_amount", f"{prefix} Test Proximity Accum Ratio"),
+                ("base_quarter_accum_ratio_amount", f"{prefix} Base Proximity Accum Ratio"),
+                ("amount_deviation", f"{prefix} Proximity Amount Deviation"),
+                ("frequency_deviation", f"{prefix} Proximity Frequency Deviation"),
                 ("false_positive_rate", f"{prefix} False Positive Rate"),
                 ("true_positive_rate", f"{prefix} True Positive Rate"),
-                ("test_quarter_alerts", f"{prefix} Test Alerts"),
-                ("test_quarter_minus_1_alerts", f"{prefix} Test-1 Alerts"),
-                ("test_quarter_minus_2_alerts", f"{prefix} Test-2 Alerts"),
-                ("total_monitoring_alerts", f"{prefix} Total Alerts"),
-                ("oldest_benchmark_period", f"{prefix} Oldest Benchmark"),
+                ("test_quarter_alerts", f"{prefix} Test Quarter Alerts"),
+                ("test_quarter_minus_1_alerts", f"{prefix} Test Quarter -1 Alerts"),
+                ("test_quarter_minus_2_alerts", f"{prefix} Test Quarter -2 Alerts"),
+                ("total_monitoring_alerts", f"{prefix} Total Trailing Alerts"),
+                ("oldest_benchmark_period", f"{prefix} Benchmark Quarter"),
             ]:
                 if field in ev and ev[field] is not None:
                     parts.append(_format_metric_row(label, ev[field], ev_src))
 
             if "monthly_trend" in ev and ev["monthly_trend"]:
                 trend_str = " | ".join(f"{k}: {v}" for k, v in ev["monthly_trend"].items())
-                parts.append(_format_metric_row(f"{prefix} Monthly Trend", trend_str, ev_src))
+                parts.append(_format_metric_row(f"{prefix} Monthly Progression", trend_str, ev_src))
         parts.append("  </domain>\n")
 
     # 6. KPI Metrics Domain
