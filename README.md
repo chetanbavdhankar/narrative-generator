@@ -31,11 +31,11 @@ The governance pipeline operates in three consecutive, modular stages:
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ STAGE 3: 2-Step LLM Governance & Narrative Generation                      │
-│   • Pipeline: prompt_pipeline/pipeline.py & prompt_pipeline/prompts.py     │
-│   • Step 1: Hypothesis & Causal Chain Formulation                          │
+│   • Prompts: prompts/hypothesis_prompt.md & prompts/narrative_prompt.md    │
+│   • Step 1: Hypothesis Formulation (prompts/hypothesis_prompt.md)          │
 │     - Falsifiable Hypothesis + 3-5 Cited Evidence Points                   │
 │     - Unbroken Causal Chain + Alternative Explanations Evaluation          │
-│   • Step 2: Executive Root Cause Narrative (<= 400 words)                  │
+│   • Step 2: Executive Narrative (prompts/narrative_prompt.md, <= 400 words)│
 │     - Observation -> Analysis -> Deterministic Action Recommendation       │
 │     - Deterministic Actions: NO ACTION / RECALIBRATE / RE-BAND / DECOM     │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -93,31 +93,19 @@ python scenario_enrichment/enricher.py \
 
 ---
 
-### Step 3: Generate 2-Step LLM Prompt Bundles
+### Step 3: Run the 2-Step LLM Prompt Prompts
 
-Generate structured prompt bundles containing Step 1 (Hypothesis) and Step 2 (Narrative) prompt templates:
+The [`prompts/`](prompts/) directory contains the two standardized prompt templates:
 
-```bash
-python -m prompt_pipeline.pipeline \
-  --dossier-input output/PL_RB_Q1_2026_dossiers_enriched.md \
-  --output-dir output/prompts/
-```
+#### Stage 3.1: Formulate Hypothesis (`prompts/hypothesis_prompt.md`)
+1. Open [`prompts/hypothesis_prompt.md`](prompts/hypothesis_prompt.md).
+2. Append the target model dossier block (`<model id="..."> ... </model>`) to the prompt.
+3. Pass to the LLM to generate the 4-part structured hypothesis (Primary hypothesis statement, cited evidence, causal chain, and counter-evidence check).
 
-#### Step 3 (Python API): Direct LLM Orchestration
-```python
-from prompt_pipeline import build_hypothesis_prompt, build_narrative_prompt
-
-# 1. Load the enriched dossier for a model
-dossier_text = open("output/per_model_enriched/CHQD.058.09.01.TM_dossier.md", encoding="utf-8").read()
-
-# 2. Step 1: Generate Hypothesis Prompt
-hypo_prompt = build_hypothesis_prompt(dossier_text)
-# hypo_response = llm_client.generate(hypo_prompt["system"], hypo_prompt["user"])
-
-# 3. Step 2: Generate Narrative Prompt (using the generated hypothesis)
-narr_prompt = build_narrative_prompt(dossier_text, hypo_response)
-# final_narrative = llm_client.generate(narr_prompt["system"], narr_prompt["user"])
-```
+#### Stage 3.2: Generate Executive Narrative (`prompts/narrative_prompt.md`)
+1. Open [`prompts/narrative_prompt.md`](prompts/narrative_prompt.md).
+2. Append the model dossier block and the generated hypothesis from Stage 3.1.
+3. Pass to the LLM to generate the executive root cause narrative ($\le 400$ words) structured into **Observation**, **Analysis**, and **Conclusion & Action Recommendation**.
 
 ---
 
@@ -127,7 +115,8 @@ narr_prompt = build_narrative_prompt(dossier_text, hypo_response)
 |---|---|---|
 | [`core.py`](core.py) | **ETL & Dossier Engine** | Excel ingestion, quarter arithmetic, KRI filtering, KPI vectorization, taxonomy decoding, and XML-tagged Markdown serialization. |
 | [`scenario_enrichment/`](scenario_enrichment/) | **Qualitative Enricher** | Standalone module to load `scenarios.json` and inject `<scenario_detection_logic>` into dossiers. |
-| [`prompt_pipeline/`](prompt_pipeline/) | **2-Step Prompt Framework** | Generates Step 1 (Hypothesis / Causal Chain) and Step 2 (Executive Narrative $\le 400$ words) prompt bundles. |
+| [`prompts/hypothesis_prompt.md`](prompts/hypothesis_prompt.md) | **Step 1 Prompt** | Formulates falsifiable hypothesis, evidence citations, causal chain, and alternative explanation evaluation. |
+| [`prompts/narrative_prompt.md`](prompts/narrative_prompt.md) | **Step 2 Prompt** | Produces dense, audit-ready executive narrative ($\le 400$ words) with Observation, Analysis, and deterministic Governance Action. |
 | [`app.py`](app.py) | **Web Server & UI** | Flask app with embedded dashboard for scanning and running pipeline runs. |
 | [`main.py`](main.py) | **CLI Entry Point** | Command-line runner for batch country/business line processing. |
 | [`start.bat`](start.bat) | **Windows Launcher** | Zero-config batch script to launch the web dashboard. |
