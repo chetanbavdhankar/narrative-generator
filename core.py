@@ -706,22 +706,95 @@ def decode_alert_definition(ad: str) -> dict[str, Any] | None:
 KRI_SPECIFICATIONS: dict[str, dict[str, str]] = {
     "KRI_1": {
         "title": "Deviation in Alert Volume",
-        "description": "Measures alert volume shift vs base quarter. Triggers if: [1-3 std dev + absolute change >=50 (RB) / >=30 (WB) for >=2 consecutive quarters] OR [>=3 std dev + absolute change >=50 (RB) / >=30 (WB) in 1 quarter].",
+        "trigger_condition": (
+            "Triggers if: [1-3 std dev + absolute change >=50 (RB) / >=30 (WB) for >=2 consecutive quarters] "
+            "OR [>=3 std dev + absolute change >=50 (RB) / >=30 (WB) in 1 quarter]."
+        ),
+        "policy_definition": (
+            "KRI 1 measures whether an Alert Definition has experienced an unusual change in the volume of alerts generated "
+            "compared to its base quarter. The baseline is established by the benchmark quarter, which represents the period "
+            "when a change is implemented or when the alert definition is verified as functioning correctly. Subsequent quarters "
+            "act as base quarters, and comparisons are performed against a test quarter, with the condition that the base quarter "
+            "precedes the test quarter by at least one quarter, and both follow the benchmark quarter. The indicator operates "
+            "through a dual-component trigger logic based on magnitude and persistence. The first component triggers when the "
+            "test quarter average monthly alert volume deviates from the base quarter by between 1 and 3 standard deviations, "
+            "combined with an absolute volume change of at least 50 alerts for Retail Banking countries or at least 30 alerts "
+            "for Wholesale Banking countries, persisting for at least two consecutive test quarters. The second component triggers "
+            "immediately when the volume deviates by at least 3 standard deviations, combined with an absolute change of at least "
+            "50 alerts for Retail Banking countries or at least 30 alerts for Wholesale Banking countries, observed for at least "
+            "one test quarter without requiring consecutiveness. The purpose is to identify Alert Definitions whose activity levels "
+            "have materially shifted due to customer behaviour changes, data quality issues, implementation defects, threshold "
+            "modifications, model misconfigurations, control degradation, or emerging financial crime risks. Statistically, it "
+            "evaluates standard deviation distance from historical distributions. Logically, it separates ordinary fluctuations "
+            "from material shifts, applying stricter criteria to single-quarter anomalies while capturing sustained moderate "
+            "deviations. From a business perspective, it serves as an early warning mechanism. Technologically, it relies on "
+            "historical alert aggregation, benchmark periods, and automated statistical calculations."
+        ),
         "diagnostic_focus": "Customer behaviour shifts, population drift, data quality/ingestion glitches, threshold changes, or emerging typology waves.",
     },
     "KRI_2": {
         "title": "Deviation in True Positive Volume",
-        "description": "Measures productive alert volume drop vs base quarter. Triggers if: [Downward 1-3 std dev + drop >=15 (RB) / >=10 (WB) for >=2 consecutive quarters] OR [Downward >=3 std dev + drop >=15 (RB) / >=10 (WB) in 1 quarter].",
+        "trigger_condition": (
+            "Triggers if: [Downward 1-3 std dev + drop >=15 (RB) / >=10 (WB) for >=2 consecutive quarters] "
+            "OR [Downward >=3 std dev + drop >=15 (RB) / >=10 (WB) in 1 quarter]."
+        ),
+        "policy_definition": (
+            "KRI 2 measures whether an Alert Definition has experienced a significant reduction in the volume of productive alerts "
+            "generated compared to its base quarter, where the base quarter is positioned after the benchmark quarter and precedes "
+            "the test quarter by at least one quarter. The indicator is structured into two components. The first component triggers "
+            "when the test quarter average monthly True Positive alert volume deviates downward by between 1 and 3 standard deviations "
+            "from the base quarter, combined with an absolute decrease of at least 15 alerts for Retail Banking countries or at least "
+            "10 alerts for Wholesale Banking countries, observed for at least two consecutive test quarters. The second component "
+            "triggers immediately when the downward deviation reaches at least 3 standard deviations, combined with an absolute "
+            "decrease of at least 15 alerts for Retail Banking countries or at least 10 alerts for Wholesale Banking countries, "
+            "observed for at least one test quarter. The purpose is to detect situations where a control remains active but loses "
+            "effectiveness in identifying genuinely relevant cases. Statistically, it compares current productive volumes against "
+            "base quarter baselines. Logically, it focuses exclusively on decreases that signal reduced detection capability, "
+            "deteriorating calibration, or weakened control performance. Business-wise, it assesses true effectiveness rather than "
+            "gross activity volume. Technologically, it utilizes historical productive alert data, benchmark comparisons, and "
+            "deviation analysis."
+        ),
         "diagnostic_focus": "Reduced detection capability, control degradation, or decaying threshold calibration.",
     },
     "KRI_3": {
         "title": "Accumulation of Escalations in Proximity",
-        "description": "Measures productive alert clustering near threshold boundaries vs base quarter. Triggers if: [10-50% proximity shift + 5-10 TPs for >=2 consecutive quarters] OR [>=50% proximity shift + >=10 TPs in 1 quarter].",
+        "trigger_condition": (
+            "Triggers if: [10-50% proximity shift + 5-10 TPs for >=2 consecutive quarters] "
+            "OR [>=50% proximity shift + >=10 TPs in 1 quarter]."
+        ),
+        "policy_definition": (
+            "KRI 3 measures whether productive alerts are increasingly concentrated near the configured threshold boundaries of an "
+            "Alert Definition when compared between a test quarter and a base quarter that follows the benchmark quarter. The indicator "
+            "is divided into two components. The first component triggers when the test quarter True Positive alert accumulation in "
+            "threshold proximity deviates from the base quarter by between 10 and 50 percentage points, combined with between 5 and "
+            "10 True Positive alerts, observed for at least two consecutive test quarters. The second component triggers immediately "
+            "when the deviation in threshold proximity reaches at least 50 percentage points, combined with at least 10 True Positive "
+            "alerts, observed for at least one test quarter. Conceptually, it examines the relationship between productive outcomes "
+            "and threshold positioning. Statistically, it evaluates clustering patterns around threshold limits. Logically, "
+            "accumulations near boundaries indicate that small threshold adjustments could significantly influence detection outcomes. "
+            "From a business perspective, it supports threshold optimization and control tuning. Technologically, it relies on "
+            "threshold values, alert measurements, and escalation outcomes to quantify proximity-based behaviour."
+        ),
         "diagnostic_focus": "Threshold boundary sensitivity; indicates whether minor threshold adjustments will capture or shed major productive volume.",
     },
     "KRI_6": {
         "title": "Dormant Alert Definition Identification",
-        "description": "Measures rule dormancy. Triggers if: [Active for >=3 consecutive quarters and subsequently produces 0 alerts for 3 consecutive quarters].",
+        "trigger_condition": (
+            "Triggers if: [Active for >=3 consecutive quarters and subsequently produces 0 alerts for 3 consecutive quarters]."
+        ),
+        "policy_definition": (
+            "KRI 6 measures whether an Alert Definition has become operationally inactive despite remaining in scope and available "
+            "for monitoring. The indicator evaluates inactivity by tracking whether an alert definition has been active for three "
+            "consecutive quarters and subsequently produces zero alerts across three consecutive quarters, rendering it eligible "
+            "for flagging without comparison to a base or benchmark quarter. The purpose is to identify definitions that have stopped "
+            "generating alerts over a sustained period, representing potential blind spots in the control framework. Logically, a "
+            "dormant Alert Definition continues to exist and remain eligible for monitoring but produces zero alerts for multiple "
+            "consecutive evaluation periods. Statistically, this is a binary absence check rather than a deviation-based calculation. "
+            "From a business perspective, prolonged inactivity indicates control obsolescence, implementation issues, overly "
+            "restrictive thresholds, underlying data problems, or ingestion failures. Technologically, it combines benchmark eligibility "
+            "information, quarterly alert counts, and existence checks to flag definitions generating zero alerts across the evaluation "
+            "window, ensuring temporary fluctuations are excluded."
+        ),
         "diagnostic_focus": "Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets.",
     },
 }
@@ -766,68 +839,56 @@ def format_scenario_detection_logic(code: str, info: dict[str, Any], source: str
     """Format scenario/control qualitative detection logic and alert generation rules."""
     esc = lambda v: str(v or "—").strip().replace("|", "\\|").replace("\n", " ")
     lines = [
-        "<scenario_detection_logic>",
-        f"## Parent Scenario & Control Specification: {code}",
-        "",
-        "> **Context for LLM:** This section defines the parent scenario detection mechanics governing how individual transaction monitoring alerts are triggered. While individual Alert Definitions apply specific segment/risk thresholds, the rules below define the core financial crime typology, focal entity scope, transaction aggregation, and alert generation criteria.",
-        "",
-        "| Scenario Dimension | Specification | Source |",
-        "|---|---|---|",
-        f"| Typology Description | {esc(info.get('Typology'))} | {source} |",
-        f"| Financial Crime Risk Type | {esc(info.get('Risk Type'))} | {source} |",
-        f"| Focal Entity Level | {esc(info.get('Focal Entity'))} | {source} |",
-        f"| Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |",
+        "  <domain name=\"scenario_detection_logic\">",
+        f"    ### Parent Scenario & Control Specification: {code}\n",
+        "    > **Context for LLM:** This section defines the parent scenario detection mechanics governing how individual transaction monitoring alerts are triggered. While individual Alert Definitions apply specific segment/risk thresholds, the rules below define the core financial crime typology, focal entity scope, and alert generation criteria.\n",
+        "    | Scenario Dimension | Specification | Source |",
+        "    |---|---|---|",
+        f"    | Typology Description | {esc(info.get('Typology'))} | {source} |",
+        f"    | Financial Crime Risk Type | {esc(info.get('Risk Type'))} | {source} |",
+        f"    | Focal Entity Level | {esc(info.get('Focal Entity'))} | {source} |",
+        f"    | Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |",
     ]
 
     decoded = decode_alert_definition(ad_id) if ad_id else None
     if decoded:
-        lines.append(f"| Configured Segment Scope | {esc(decoded['segment_name'])} (CTC: {decoded['customer_type_code']}) [{decoded['line_of_business']}] [Code: {decoded['segment_code']}] | AD_Taxonomy_Standard |")
-        lines.append(f"| Configured Customer Risk | {esc(decoded['risk_name'])} [Code: {decoded['risk_code']}] | AD_Taxonomy_Standard |")
-        lines.append(f"| Configured Monitoring Window | {esc(decoded['period_alias'])} - {esc(decoded['period_description'])} [Code: {decoded['period_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"    | Configured Segment Scope | {esc(decoded['segment_name'])} (CTC: {decoded['customer_type_code']}) [{decoded['line_of_business']}] [Code: {decoded['segment_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"    | Configured Customer Risk | {esc(decoded['risk_name'])} [Code: {decoded['risk_code']}] | AD_Taxonomy_Standard |")
+        lines.append(f"    | Configured Monitoring Window | {esc(decoded['period_alias'])} - {esc(decoded['period_description'])} [Code: {decoded['period_code']}] | AD_Taxonomy_Standard |")
     lines.append("")
 
     if info.get("Conditions"):
         lines.extend([
-            "### 1. Target Population & Applicability Conditions",
-            "Defines customer segments, entity types, and classification filters required for this control to evaluate activity:",
-            info["Conditions"].strip(),
-            ""
-        ])
-
-    if info.get("How to detect"):
-        lines.extend([
-            "### 2. Transaction Profiling & Aggregation Logic",
-            "Defines how the monitoring engine profiles customer activity and aggregates transactional volume/value:",
-            info["How to detect"].strip(),
+            "    #### Target Population & Applicability Conditions",
+            f"    {info['Conditions'].strip()}",
             ""
         ])
 
     if info.get("FCRM will generate an alert if"):
         lines.extend([
-            "### 3. Single Alert Trigger Criteria",
-            "Defines the exact conditional rule that evaluates aggregated metrics to fire a single transaction monitoring alert:",
-            info["FCRM will generate an alert if"].strip(),
+            "    #### Single Alert Trigger Criteria",
+            f"    {info['FCRM will generate an alert if'].strip()}",
             ""
         ])
 
     if info.get("FCRM Scenario Logic"):
         lines.extend([
-            "### 4. Technical Scenario Logic",
-            info["FCRM Scenario Logic"].strip(),
+            "    #### Technical Scenario Logic",
+            f"    {info['FCRM Scenario Logic'].strip()}",
             ""
         ])
 
     profiles = info.get("Solution Definition Profiles", [])
     if profiles:
-        lines.append("### 5. In-Scope Transaction Profiles")
+        lines.append("    #### In-Scope Transaction Profiles")
         for p in profiles:
             p_name = p.get("profile", "—")
             tc = ", ".join(p.get("transaction_code", [])) or "—"
             dc = ", ".join(p.get("debit_credit", [])) or "—"
-            lines.append(f"- **Profile `{p_name}`**: Transaction Codes: `[{tc}]` | Flow Direction: `[{dc}]`")
+            lines.append(f"    - **Profile `{p_name}`**: Transaction Codes: `[{tc}]` | Flow Direction: `[{dc}]`")
         lines.append("")
 
-    lines.append("</scenario_detection_logic>")
+    lines.append("  </domain>\n")
     return "\n".join(lines)
 
 
@@ -849,7 +910,7 @@ def serialize_dossier_markdown(
     scenarios_catalog: dict[str, Any] | None = None,
     scenario_source: str = "scenarios.json"
 ) -> str:
-    """Serialize a single alert definition data block into an LLM-optimized XML-tagged Markdown dossier."""
+    """Serialize a single alert definition data block into an LLM-optimized XML-tagged Markdown dossier in exact domain order."""
     ad = ad_block.get("alert_definition", "UNKNOWN")
     identity = ad_block.get("identity", {})
     thresholds = ad_block.get("thresholds", {})
@@ -891,7 +952,15 @@ def serialize_dossier_markdown(
             parts.append(_format_metric_row(label, identity[k], default_src))
     parts.append("  </domain>\n")
 
-    # 2. Quarterly Context Domain
+    # 2. Scenario Detection Logic (Qualitative context immediately after identity)
+    if scenarios_catalog:
+        scen_code = extract_scenario_code(ad)
+        info = scenarios_catalog.get(scen_code) or scenarios_catalog.get(ad.strip().upper())
+        if info:
+            logic_md = format_scenario_detection_logic(scen_code or ad, info, scenario_source, ad_id=ad)
+            parts.append(logic_md)
+
+    # 3. Quarterly Context Domain
     parts.append('  <domain name="quarterly_context">')
     parts.append("    | Metric | Value | Source |")
     parts.append("    |--------|-------|--------|")
@@ -905,32 +974,7 @@ def serialize_dossier_markdown(
         parts.append(_format_metric_row("Base Quarters (Baseline)", ", ".join(quarters["base_quarters"]), "Derived/Quarter_Resolution"))
     parts.append("  </domain>\n")
 
-    # 3. Thresholds Domain
-    if thresholds:
-        parts.append('  <domain name="thresholds">')
-        parts.append("    | Metric | Value | Source |")
-        parts.append("    |--------|-------|--------|")
-        th_labels = [
-            ("min_amount_threshold", "Min Amount Threshold"),
-            ("min_freq_threshold", "Min Frequency Threshold"),
-            ("max_amount_threshold", "Max Amount Threshold"),
-        ]
-        for k, label in th_labels:
-            if k in thresholds:
-                parts.append(_format_metric_row(label, thresholds[k], default_src))
-        parts.append("  </domain>\n")
-
-    # 4. Flags Domain
-    if flags:
-        parts.append('  <domain name="flags">')
-        parts.append("    | Metric | Value | Source |")
-        parts.append("    |--------|-------|--------|")
-        for k, v in flags.items():
-            label = k.replace("_", " ").title()
-            parts.append(_format_metric_row(label, v, default_src))
-        parts.append("  </domain>\n")
-
-    # 5. Triggered KRIs Domain (Annotated with Governance Definitions)
+    # 4. Triggered KRIs Domain (Annotated with verbatim Governance Definitions)
     if triggered_kris:
         parts.append('  <domain name="triggered_kris">')
         parts.append("    | Metric | Value | Source |")
@@ -947,9 +991,11 @@ def serialize_dossier_markdown(
             elif "sub_trigger" in ev:
                 prefix += f" [{ev['sub_trigger'].upper()}]"
 
-            # Indicator Definition & Evaluation Logic Rows
-            if spec.get("description"):
-                parts.append(_format_metric_row(f"{kri_key} Evaluation Rule", spec["description"], "TM_Governance_Policy"))
+            # Indicator Definitions & Evaluation Logic
+            if spec.get("trigger_condition"):
+                parts.append(_format_metric_row(f"{kri_key} Trigger Condition (Brief Rule)", spec["trigger_condition"], "TM_Governance_Policy"))
+            if spec.get("policy_definition"):
+                parts.append(_format_metric_row(f"{kri_key} Policy Definition (Comprehensive)", spec["policy_definition"], "TM_Governance_Policy"))
             if spec.get("diagnostic_focus"):
                 parts.append(_format_metric_row(f"{kri_key} Diagnostic Focus", spec["diagnostic_focus"], "TM_Governance_Policy"))
 
@@ -982,7 +1028,32 @@ def serialize_dossier_markdown(
                 parts.append(_format_metric_row(f"{prefix} Monthly Progression", trend_str, ev_src))
         parts.append("  </domain>\n")
 
-    # 6. KPI Metrics Domain
+    # 5. Thresholds Domain
+    if thresholds:
+        parts.append('  <domain name="thresholds">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        th_labels = [
+            ("min_amount_threshold", "Min Amount Threshold"),
+            ("min_freq_threshold", "Min Frequency Threshold"),
+            ("max_amount_threshold", "Max Amount Threshold"),
+        ]
+        for k, label in th_labels:
+            if k in thresholds:
+                parts.append(_format_metric_row(label, thresholds[k], default_src))
+        parts.append("  </domain>\n")
+
+    # 6. Flags Domain
+    if flags:
+        parts.append('  <domain name="flags">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        for k, v in flags.items():
+            label = k.replace("_", " ").title()
+            parts.append(_format_metric_row(label, v, default_src))
+        parts.append("  </domain>\n")
+
+    # 7. KPI Metrics Domain
     if kpi_context:
         parts.append('  <domain name="kpi_metrics">')
         parts.append("    | Metric | Value | Source |")
@@ -1019,7 +1090,7 @@ def serialize_dossier_markdown(
                 parts.append(_format_metric_row(label, sub_v, src))
         parts.append("  </domain>\n")
 
-    # 7. Governance & Recommendations Domain
+    # 8. Governance & Recommendations Domain
     if rec:
         parts.append('  <domain name="governance_recommendations">')
         parts.append("    | Metric | Value | Source |")
@@ -1028,15 +1099,6 @@ def serialize_dossier_markdown(
         parts.append("  </domain>\n")
 
     parts.append("</structured_metrics>\n")
-
-    # 8. Qualitative Scenario Detection Logic (Injected if available)
-    if scenarios_catalog:
-        scen_code = extract_scenario_code(ad)
-        info = scenarios_catalog.get(scen_code) or scenarios_catalog.get(ad.strip().upper())
-        if info:
-            logic_md = format_scenario_detection_logic(scen_code or ad, info, scenario_source, ad_id=ad)
-            parts.append(logic_md + "\n")
-
     parts.append("</model>\n")
     return "\n".join(parts)
 

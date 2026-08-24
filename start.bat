@@ -1,9 +1,10 @@
 @echo off
-REM ─── KRI/KPI Context Builder Launcher ─────────────────────────────
+REM ------------------------------------------------------------------
+REM KRI/KPI Context Builder Launcher
 REM Double-click to start. Optionally pass a port number:
 REM   start.bat 8080
 REM Default port: 5000
-REM ──────────────────────────────────────────────────────────────────
+REM ------------------------------------------------------------------
 
 set PORT=%1
 if "%PORT%"=="" set PORT=5000
@@ -11,10 +12,10 @@ if "%PORT%"=="" set PORT=5000
 cd /d "%~dp0"
 
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║   KRI/KPI Context Builder                ║
-echo  ║   Starting on port %PORT%                   ║
-echo  ╚══════════════════════════════════════════╝
+echo ======================================================
+echo   KRI / KPI Context Builder (Transaction Monitoring)
+echo   Starting server on port %PORT%...
+echo ======================================================
 echo.
 
 REM Install dependencies if missing
