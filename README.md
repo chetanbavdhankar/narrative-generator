@@ -1,394 +1,209 @@
-# Narrative Generator — KRI/KPI Quantitative Context & Dossier Builder
+# Transaction Monitoring (TM) Narrative Generator
 
-A lightweight, high-performance Python ETL pipeline for Transaction Monitoring (TM). It scans quarterly Excel workbooks, filters alert definitions with triggered Key Risk Indicators (KRIs), enriches them with Key Performance Indicator (KPI) metrics, tracks exact file and sheet source citations, and generates LLM-optimized XML-tagged Markdown dossiers alongside JSON context payloads.
+A complete, end-to-end ETL and prompt engineering framework for Transaction Monitoring (TM) Model Governance. It converts raw quarterly Excel workbooks and scenario catalogs into audit-grade, evidence-backed root cause hypotheses and executive narratives ($\le 400$ words) with strict data lineage citations.
 
 ---
 
-## 1. Setup Instructions
+## 1. End-to-End Pipeline Workflow
 
-Prerequisites: Python 3.10+
+The governance pipeline operates in three consecutive, modular stages:
 
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 1: Quantitative Ingestion & Dossier Serialization                    │
+│   • Core Engine: core.py / main.py / app.py                                │
+│   • Inputs: Excel Workbooks (e.g. input/PL_RB_kri.xlsx)                    │
+│   • Logic: Evaluates KRI 1, 2, 3, 6 triggers, enriches KPIs (1, 2b, 3, etc)│
+│   • Decodes: AD Taxonomy (ABCD.123.SS.RR.XY -> Segment, Risk, Period)      │
+│   • Output: Quantitative Markdown Dossiers (output/<run>_dossiers.md)      │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 2: Qualitative Scenario & Control Logic Enrichment                   │
+│   • Enricher: scenario_enrichment/enricher.py                              │
+│   • Inputs: Quantitative Dossiers + scenarios.json                         │
+│   • Logic: Maps scenario key (AAAA.NNN), injects typology, detection logic,│
+│     and alert trigger criteria inside <scenario_detection_logic>           │
+│   • Output: Enriched Dossiers (output/<run>_dossiers_enriched.md)          │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 3: 2-Step LLM Governance & Narrative Generation                      │
+│   • Pipeline: prompt_pipeline/pipeline.py & prompt_pipeline/prompts.py     │
+│   • Step 1: Hypothesis & Causal Chain Formulation                          │
+│     - Falsifiable Hypothesis + 3-5 Cited Evidence Points                   │
+│     - Unbroken Causal Chain + Alternative Explanations Evaluation          │
+│   • Step 2: Executive Root Cause Narrative (<= 400 words)                  │
+│     - Observation -> Analysis -> Deterministic Action Recommendation       │
+│     - Deterministic Actions: NO ACTION / RECALIBRATE / RE-BAND / DECOM     │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Quickstart: Step-by-Step Execution (From Scratch to Narrative)
+
+### Prerequisites
 ```bash
 pip install -r requirements.txt
 ```
 
 ---
 
-## 2. How to Run the Code
+### Step 1: Generate Quantitative Model Dossiers
 
-### Option A: Interactive Web Interface (Recommended)
+Choose one of the following execution methods:
+
+#### Option A: Interactive Web UI (Recommended)
 Double-click [`start.bat`](start.bat) on Windows or execute:
 ```bash
 python app.py --port 5000
 ```
-- Automatically opens `http://localhost:5000` in your web browser.
-- **Browse** and choose input/output folders with native Windows dialogs.
-- **Scan** automatically groups and displays Excel files by Country and Business Line.
-- Check/uncheck individual files or entire country portfolios, then click **Run**.
+- Open `http://localhost:5000` in your web browser.
+- **Browse** to select input/output directories.
+- Click **Scan** to group portfolios by Country / Business Line, select files, and click **Run Pipeline**.
 
-### Option B: Command Line Interface (CLI)
+#### Option B: Command Line Interface (CLI)
 ```bash
 python main.py --country PL --business-line RB --ingestion-quarter Q1_2026
 ```
-*(Optional flags: `--input-dir input/` and `--output-dir output/`)*
+*(Outputs saved to `output/PL_RB_Q1_2026_dossiers.md` and `output/per_model/`)*
 
-### Option C: Jupyter Notebook
-Open [`run.ipynb`](run.ipynb) in VS Code or Jupyter, configure the `RUNS` list, and execute the cell:
+---
+
+### Step 2: Inject Qualitative Scenario & Control Logic
+
+Run the standalone scenario enricher to map qualitative detection rules from `scenarios.json`:
+
+```bash
+# Enrich a single consolidated dossier file:
+python scenario_enrichment/enricher.py \
+  --scenarios-file scenarios.json \
+  --dossier-input output/PL_RB_Q1_2026_dossiers.md \
+  --output-target output/PL_RB_Q1_2026_dossiers_enriched.md
+
+# Or enrich an entire directory of per-model dossiers:
+python scenario_enrichment/enricher.py \
+  --scenarios-file scenarios.json \
+  --dossier-input output/per_model \
+  --output-target output/per_model_enriched
+```
+
+---
+
+### Step 3: Generate 2-Step LLM Prompt Bundles
+
+Generate structured prompt bundles containing Step 1 (Hypothesis) and Step 2 (Narrative) prompt templates:
+
+```bash
+python -m prompt_pipeline.pipeline \
+  --dossier-input output/PL_RB_Q1_2026_dossiers_enriched.md \
+  --output-dir output/prompts/
+```
+
+#### Step 3 (Python API): Direct LLM Orchestration
 ```python
-RUNS = [
-    ("PL", "RB"),
-    ("RO", "WB"),
-]
+from prompt_pipeline import build_hypothesis_prompt, build_narrative_prompt
+
+# 1. Load the enriched dossier for a model
+dossier_text = open("output/per_model_enriched/CHQD.058.09.01.TM_dossier.md", encoding="utf-8").read()
+
+# 2. Step 1: Generate Hypothesis Prompt
+hypo_prompt = build_hypothesis_prompt(dossier_text)
+# hypo_response = llm_client.generate(hypo_prompt["system"], hypo_prompt["user"])
+
+# 3. Step 2: Generate Narrative Prompt (using the generated hypothesis)
+narr_prompt = build_narrative_prompt(dossier_text, hypo_response)
+# final_narrative = llm_client.generate(narr_prompt["system"], narr_prompt["user"])
 ```
 
 ---
 
-## 3. How to Read the Codebase
+## 3. Project Structure & Components
 
-### System Flow & Architecture
-
-```text
-Input Excel Files (e.g. input/PL_RB_*.xlsx)
-                 │
-                 ▼
-      [core.py: load_tables] ── Fast openpyxl reader & source provenance tagger (file + sheet)
-                 │
-                 ▼
-     [core.py: resolve_quarter] ── Ingestion / Test / Base quarter derivation
-                 │
-                 ▼
-      [core.py: filter_kris] ── Filter triggered alert definitions (KRI == 1) with provenance
-                 │
-                 ▼
-      [core.py: enrich_kpis] ── Vectorized KPI pull with sheet references
-                 │
-                 ▼
-      [core.py: build_output]
-                 ├── <COUNTRY>_<BL>_<QUARTER>_dossiers.md (Combined Dossiers)
-                 ├── per_model/<ad>_dossier.md (Isolated Model Dossiers)
-                 ├── <COUNTRY>_<BL>_<QUARTER>_relevance_matrix.md
-                 ├── <COUNTRY>_<BL>_<QUARTER>_quantitative_context.json
-                 └── <COUNTRY>_<BL>_<QUARTER>_relevance_matrix.json
-```
-
-### Core Components
-
-| File | Role |
-|---|---|
-| [`core.py`](core.py) | **ETL & Dossier Engine**: Quarter arithmetic, Excel loader with provenance, KRI filter, KPI enricher, and XML-tagged Markdown Dossier serializer |
-| [`scenario_enrichment/`](scenario_enrichment/) | **Qualitative Enricher (Standalone)**: CLI & engine to inject scenario definitions (`scenarios.json`) into quantitative dossiers |
-| [`app.py`](app.py) | **Web Server & UI**: Flask endpoints (`/api/scan`, `/api/run`, `/api/browse`) with embedded dark-mode UI |
-| [`main.py`](main.py) | **CLI Entry Point**: Parses command-line arguments and runs the pipeline |
-| [`run.ipynb`](run.ipynb) | **Interactive Notebook**: Batch processing and interactive testing |
-| [`start.bat`](start.bat) | **Windows Launcher**: Auto-checks dependencies and starts the web app |
-| [`requirements.txt`](requirements.txt) | Explicit dependency versions (`pandas`, `openpyxl`, `flask`) |
-| [`.gitignore`](.gitignore) | Excludes bytecode, temp Excel locks (`~$*.xlsx`), and output artifacts |
-
-### Business & Pipeline Logic
-- **Quarter Math**:
-  - `ingestion_quarter` (e.g. `Q1_2026`) = current run period.
-  - `test_quarter` = ingestion − 2 quarters (`Q3_2025`, evaluation period).
-  - `base_quarter` = ingestion − 3 quarters (`Q2_2025`, baseline period).
-- **Provenance & Citations**: Every single data point captures its origin (`<Filename>.xlsx/<SheetName>`), enabling LLMs to generate verifiable narrative citations.
-- **KRI Trigger Evaluation**: Inspects sheets `KRI_1`, `KRI_2`, `KRI_3`, and `KRI_6`. Filters alert definitions where the trigger flag `== 1`.
-- **KPI Enrichment**: Pre-filters KPI sheets (`KPI_1`, `KPI_2b`, `KPI_3`, `KPI_6`, `KPI_11`, `KPI_12`, `KPI_15a/b`, `KPI_16`, `KPI_17`, `KPI_18`) exclusively for triggered alert definitions.
+| Module / Path | Role | Description |
+|---|---|---|
+| [`core.py`](core.py) | **ETL & Dossier Engine** | Excel ingestion, quarter arithmetic, KRI filtering, KPI vectorization, taxonomy decoding, and XML-tagged Markdown serialization. |
+| [`scenario_enrichment/`](scenario_enrichment/) | **Qualitative Enricher** | Standalone module to load `scenarios.json` and inject `<scenario_detection_logic>` into dossiers. |
+| [`prompt_pipeline/`](prompt_pipeline/) | **2-Step Prompt Framework** | Generates Step 1 (Hypothesis / Causal Chain) and Step 2 (Executive Narrative $\le 400$ words) prompt bundles. |
+| [`app.py`](app.py) | **Web Server & UI** | Flask app with embedded dashboard for scanning and running pipeline runs. |
+| [`main.py`](main.py) | **CLI Entry Point** | Command-line runner for batch country/business line processing. |
+| [`start.bat`](start.bat) | **Windows Launcher** | Zero-config batch script to launch the web dashboard. |
+| [`run.ipynb`](run.ipynb) | **Jupyter Notebook** | Interactive notebook for batch execution and experimentation. |
 
 ---
 
-## 4. Input Filename Convention
+## 4. Alert Definition Taxonomy Standards (`ABCD.123.SS.RR.XY`)
 
-Input files must include `<Country>_<BusinessLine>` separated by underscores (`_`) anywhere in the filename.
+Alert definition codes are automatically parsed into their constituent governance parameters:
 
-- **Country**: 2 to 4 letter country code (e.g. `PL`, `RO`, `FR`, `DE`, `CH`, `NL`).
-- **Business Line**: Short or long format (case-insensitive):
-  - **RB** synonyms: `RB`, `Retail`, `Retail_Bank`, `Retail_Banking`, `RetailBank`, `RetailBanking`
-  - **WB** synonyms: `WB`, `Wholesale`, `Wholesale_Bank`, `Wholesale_Banking`, `WholesaleBank`, `WholesaleBanking`
+### Segment Mapping (`SS`)
+| Code | CTC | Segment Name | Line of Business |
+|---|---|---|---|
+| **01** | FI | Financial Institution | Wholesale (WB) |
+| **02** | LARGE | Large Corporation | Wholesale (WB) |
+| **03** | SMALL / OTHER | Small Corporation / Other WB Entity | Wholesale (WB) |
+| **04** | MIDCORP | Medium Corporation | Retail (RB) |
+| **05** | SME | Small-Medium Entity | Retail (RB) |
+| **06** | PRIVATE | Private Individual | Retail (RB) |
+| **07** | PRIBA | Private Banking | Retail (RB) |
+| **08** | Combined | Wholesale Banking Customer (01, 02, 03, 60) | Wholesale (WB) |
+| **09** | Combined | Retail - Entity (04, 05, 13–22: Midcorp, SME, CI, NCI) | Retail (RB) |
+| **10** | Combined | Retail - Individual (06, 07, 24–27: Private, PRIBA, Turnover bands) | Retail (RB) |
+| **11** | Combined | Retail Banking Customer (04–07, 13–22, 24–27) | Retail (RB) |
+| **12** | Combined | Universal Banking Customer (All WB & RB Segments) | Universal (UB) |
+| **13–17** | CI-XL to CI-XS | Cash Intensive Entities (Extra Large to Extra Small) | Retail (RB) |
+| **18–22** | NCI-XL to NCI-XS | Non-Cash Intensive Entities (Extra Large to Extra Small) | Retail (RB) |
+| **23** | Combined | Cash & Non-Cash Intensive Entities (13–22) | Retail (RB) |
+| **24–27** | INDLT to INDVHT | Individuals (Low, Medium, High, Very High Turnover) | Retail (RB) |
+| **60** | MEDIUM | Medium Corporation | Wholesale (WB) |
+
+### Customer Risk Mapping (`RR`)
+| Code | Risk Category | Description |
+|---|---|---|
+| **00** | All Risks | Combined 01 (High), 02 (Medium), 03 (Low) |
+| **01** | High Risk | High risk tier |
+| **02** | Medium Risk | Medium risk tier |
+| **03** | Low Risk | Low risk tier |
+| **04** | Medium/Low Risk | Combined 02 (Medium) and 03 (Low) |
+
+### Monitoring Period Mapping (`XY`)
+| Code | Alias | Evaluation Window |
+|---|---|---|
+| **TD** | Today | 1 day transaction activity |
+| **TDY** | Today + Yesterday | 2 days transaction activity |
+| **TW** | This Week | 1 calendar week (Mon–Sun, 1–7 days) |
+| **TWLW** | This Week + Last Week | 2 calendar weeks (8–14 days) |
+| **TM** | This Month | 1 calendar month |
+| **TMLM** | This Month + Last Month | 2 calendar months (current + preceding month) |
+| **TQ** | This Quarter | 1 calendar quarter (90–92 days) |
+| **TQLQ** | This Quarter + Last Quarter | 2 calendar quarters (current + preceding quarter) |
+| **RP** | Rolling Period | Rolling window (This Month + N Last Months) |
+
+---
+
+## 5. KRI Governance Evaluation Rules
+
+| Indicator | Title | Trigger Evaluation Rule (Boolean OR) | Diagnostic Focus |
+|---|---|---|---|
+| **KRI 1** | Deviation in Alert Volume | `[1-3 std dev + change >=50 (RB) / >=30 (WB) for >=2 consecutive quarters]`<br>**OR**<br>`[>=3 std dev + change >=50 (RB) / >=30 (WB) in 1 quarter]` | Customer behaviour shifts, population drift, data ingestion glitches, threshold modifications, emerging typology waves. |
+| **KRI 2** | Deviation in True Positive Volume | `[Downward 1-3 std dev + drop >=15 (RB) / >=10 (WB) for >=2 consecutive quarters]`<br>**OR**<br>`[Downward >=3 std dev + drop >=15 (RB) / >=10 (WB) in 1 quarter]` | Reduced detection capability, control degradation, decaying threshold calibration. |
+| **KRI 3** | Accumulation in Threshold Proximity | `[10-50% proximity shift + 5-10 TPs for >=2 consecutive quarters]`<br>**OR**<br>`[>=50% proximity shift + >=10 TPs in 1 quarter]` | Threshold boundary sensitivity; indicates if small threshold adjustments will capture or shed major productive volume. |
+| **KRI 6** | Dormant Alert Definition Identification | `[Active for >=3 consecutive quarters and subsequently produces 0 alerts for 3 consecutive quarters]` | Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets. |
 
 ---
 
-## 5. Output Deliverables & Formats
+## 6. Deterministic Action Taxonomy for Narratives
 
-The pipeline generates both XML-tagged Markdown Dossiers (for prompt injection / narrative drafting) and JSON payloads (for programmatic parsing):
+The LLM is strictly constrained in Step 2 to select exactly one of the 4 governance actions:
 
-### Deliverable 1: XML-Tagged Markdown Dossiers (`_dossiers.md` and `per_model/<ad>_dossier.md`)
-High-signal, structured markdown tables enclosed in semantic XML tags with explicit source citations per row:
-
-```markdown
-<model id="AD_PL_RB_001" code="AD_PL_RB_001">
-
-<structured_metrics>
-  <domain name="identity">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Country | PL | PL_RB_kri.xlsx/KRI_1 |
-    | Business Line | RB | PL_RB_kri.xlsx/KRI_1 |
-    | Segment Description | Retail Banking | PL_RB_kri.xlsx/KRI_1 |
-    | Customer Type Code | INDV | PL_RB_kri.xlsx/KRI_1 |
-    | Customer Risk | HIGH | PL_RB_kri.xlsx/KRI_1 |
-  </domain>
-
-  <domain name="quarterly_context">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Ingestion Quarter | Q1_2026 | Derived/Quarter_Resolution |
-    | Test Quarter (Evaluation) | Q3_2025 | Derived/Quarter_Resolution |
-    | Base Quarter (Baseline) | Q2_2025 | Derived/Quarter_Resolution |
-  </domain>
-
-  <domain name="thresholds">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Min Amount Threshold | 15000 | PL_RB_kri.xlsx/KRI_1 |
-    | Min Frequency Threshold | 5 | PL_RB_kri.xlsx/KRI_1 |
-  </domain>
-
-  <domain name="flags">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Many Alerts Flag | 1 | PL_RB_kri.xlsx/KRI_1 |
-    | Lowest Amount Threshold Flag | 0 | PL_RB_kri.xlsx/KRI_1 |
-    | Thresholds Changed Flag | 0 | PL_RB_kri.xlsx/KRI_1 |
-  </domain>
-
-  <domain name="triggered_kris">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | KRI_1 (increase) Test Quarter Count | 142 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Base Quarter Count | 85 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Difference (Test - Base) | 57 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Full Period Avg Count | 90.2 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Full Period Stddev | 12.4 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) 3-Sigma Exceeded | 1 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Consecutive Trigger | 1 | PL_RB_kri.xlsx/KRI_1 |
-    | KRI_1 (increase) Monthly Trend | month_1: 40 | month_2: 48 | month_3: 54 | PL_RB_kri.xlsx/KRI_1 |
-  </domain>
-
-  <domain name="kpi_metrics">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Alert Count (KPI_1) | 142 | PL_RB_kpi.xlsx/KPI_1 |
-    | Productive Alert Rate % (KPI_2b) | 18.5 | PL_RB_kpi.xlsx/KPI_2b |
-    | Customer Count (KPI_3) | 110 | PL_RB_kpi.xlsx/KPI_3 |
-    | KPI_17 Quarterly Alert Count | 142 | PL_RB_kpi.xlsx/KPI_17_quarter |
-    | KPI_17 Quarterly True Positive Count | 26 | PL_RB_kpi.xlsx/KPI_17_quarter |
-    | KPI_17 Quarterly False Positive Rate | 0.817 | PL_RB_kpi.xlsx/KPI_17_quarter |
-    | KPI_17 Quarterly General Overlap Ratio | 0.12 | PL_RB_kpi.xlsx/KPI_17_quarter |
-  </domain>
-
-  <domain name="governance_recommendations">
-    | Metric | Value | Source |
-    |--------|-------|--------|
-    | Recommendation | Review threshold adjustment | PL_RB_kri.xlsx/KRI_1 |
-  </domain>
-</structured_metrics>
-
-</model>
-```
-      "base": "Q2_2025"
-    },
-    "triggered_kris": [
-      {
-        "kri": "KRI_1",
-        "direction": "increase",
-        "test_quarter": "Q3_2025",
-        "base_quarter": "Q2_2025",
-        "test_quarter_count": 142,
-        "base_quarter_count": 85,
-        "difference": 57,
-        "full_period_avg_count": 90.2,
-        "full_period_stddev_count": 12.4,
-        "three_sigma_exceeded": 1,
-        "consecutive_trigger": 1,
-        "monthly_trend": { "month_1": 40, "month_2": 48, "month_3": 54 }
-      }
-    ],
-    "recommendation": "Review threshold adjustment",
-    "kpi_context": {
-      "kpi1_alert_count": 142,
-      "kpi2b_productive_alert_rate": 18.5,
-      "kpi3_customer_count": 110,
-      "kpi17_quarterly_metrics": {
-        "alert_count": 142,
-        "true_positive_count": 26,
-        "false_positive_rate": 0.817,
-        "general_overlap_ratio": 0.12
-      }
-    }
-  },
-  {
-    "alert_definition": "AD_PL_RB_002",
-    "identity": {
-      "country": "PL",
-      "business_line": "RB",
-      "segment_desc": "Retail Small Business",
-      "customer_type_code": "SME",
-      "customer_risk": "MEDIUM"
-    },
-    "thresholds": {
-      "min_amount_threshold": 25000,
-      "min_frequency_threshold": 8
-    },
-    "flags": {
-      "many_alerts_flag": 0,
-      "thresholds_changed_flag": 0
-    },
-    "quarters": {
-      "ingestion": "Q1_2026",
-      "test": "Q3_2025",
-      "base_quarters": ["Q1_2025", "Q2_2025"]
-    },
-    "triggered_kris": [
-      {
-        "kri": "KRI_2",
-        "test_quarter": "Q3_2025",
-        "base_quarter": "Q2_2025",
-        "test_quarter_count": 8,
-        "base_quarter_count": 34,
-        "difference": -26,
-        "alert_count": 220,
-        "full_period_avg_productive_alerts": 31.5,
-        "full_period_stddev_productive_alerts": 6.8,
-        "three_sigma_exceeded": 1,
-        "consecutive_trigger": 1,
-        "monthly_trend": { "month_1": 4, "month_2": 2, "month_3": 2 }
-      },
-      {
-        "kri": "KRI_2",
-        "test_quarter": "Q3_2025",
-        "base_quarter": "Q1_2025",
-        "test_quarter_count": 8,
-        "base_quarter_count": 40,
-        "difference": -32,
-        "alert_count": 220,
-        "full_period_avg_productive_alerts": 31.5,
-        "full_period_stddev_productive_alerts": 6.8,
-        "three_sigma_exceeded": 1,
-        "consecutive_trigger": 1,
-        "monthly_trend": { "month_1": 4, "month_2": 2, "month_3": 2 }
-      }
-    ],
-    "recommendation": "Investigate drop in true productive alerts",
-    "kpi_context": {
-      "kpi1_alert_count": 220,
-      "kpi2b_productive_alert_rate": 3.6,
-      "kpi3_customer_count": 185
-    }
-  },
-  {
-    "alert_definition": "AD_PL_RB_003",
-    "identity": {
-      "country": "PL",
-      "business_line": "RB",
-      "segment_desc": "Private Banking",
-      "customer_type_code": "CORP",
-      "customer_risk": "MEDIUM"
-    },
-    "thresholds": {
-      "min_amount_threshold": 50000,
-      "min_frequency_threshold": 10
-    },
-    "flags": {
-      "many_alerts_flag": 0,
-      "thresholds_changed_flag": 1
-    },
-    "quarters": {
-      "ingestion": "Q1_2026",
-      "test": "Q3_2025"
-    },
-    "triggered_kris": [
-      {
-        "kri": "KRI_3",
-        "sub_trigger": "amount",
-        "test_quarter": "Q3_2025",
-        "base_quarter": "Q2_2025",
-        "test_quarter_accum_ratio_amount": 1250000.0,
-        "base_quarter_accum_ratio_amount": 820000.0,
-        "amount_deviation": 0.524,
-        "alert_count": 38,
-        "false_positive_rate": 0.658,
-        "true_positive_rate": 0.342
-      },
-      {
-        "kri": "KRI_6",
-        "test_quarter": "Q3_2025",
-        "test_quarter_alerts": 0,
-        "test_quarter_minus_1_alerts": 0,
-        "test_quarter_minus_2_alerts": 0,
-        "total_monitoring_alerts": 103,
-        "oldest_benchmark_period": "2024-01"
-      }
-    ],
-    "recommendation": "Maintain active monitoring",
-    "kpi_context": {
-      "kpi1_alert_count": 38,
-      "kpi6_value": 3.4,
-      "kpi16_unique_customers": 29
-    }
-  }
-]
-```
-
-### Deliverable 2: `relevance_matrix.json`
-Lightweight lookup mapping allowing prompt builders to look up and inject only relevant qualitative descriptions.
-
-```json
-[
-  {
-    "alert_definition": "AD_PL_RB_001",
-    "triggered_kris": [
-      "KRI_1"
-    ],
-    "kri_sub_triggers": {
-      "KRI_1": [
-        "increase"
-      ]
-    },
-    "evaluated_base_quarters": [
-      "Q2_2025"
-    ],
-    "available_kpis": [
-      "KPI_1",
-      "KPI_2b",
-      "KPI_3",
-      "KPI_17_quarter"
-    ]
-  },
-  {
-    "alert_definition": "AD_PL_RB_002",
-    "triggered_kris": [
-      "KRI_2"
-    ],
-    "evaluated_base_quarters": [
-      "Q1_2025",
-      "Q2_2025"
-    ],
-    "available_kpis": [
-      "KPI_1",
-      "KPI_2b",
-      "KPI_3"
-    ]
-  },
-  {
-    "alert_definition": "AD_PL_RB_003",
-    "triggered_kris": [
-      "KRI_3",
-      "KRI_6"
-    ],
-    "kri_sub_triggers": {
-      "KRI_3": [
-        "amount"
-      ]
-    },
-    "evaluated_base_quarters": [
-      "Q2_2025"
-    ],
-    "available_kpis": [
-      "KPI_1",
-      "KPI_6",
-      "KPI_16"
-    ]
-  }
-]
-```
-
----
+1. `[ACTION: NO ACTION REQUIRED]`
+   - Justification: Deactivated model, expected burn-in period for newly active rule, post-change re-baseline, or temporary volume fluctuation with healthy conversion rates (KPI 2b).
+2. `[ACTION: RECALIBRATE / TIGHTEN THRESHOLD]`
+   - Justification: Alert volume explosion (KRI 1) accompanied by collapsing True Positive rates (KRI 2 / KPI 2b), indicating excessive noise.
+3. `[ACTION: RE-BAND / ADJUST PROXIMITY BOUNDARY]`
+   - Justification: Escalation clustering near boundary limits (KRI 3), indicating parameter sensitivity or customer structuring.
+4. `[ACTION: DECOMMISSION / CONSOLIDATE]`
+   - Justification: Prolonged zero-volume dormancy across $\ge 3$ evaluation quarters (KRI 6) where typology coverage is superseded by another control (retained only if serving as a critical Terrorist Financing / Sanctions safety net).
