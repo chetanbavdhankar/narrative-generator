@@ -66,28 +66,31 @@ enriched_dossier = enrich_dossier_text(raw_dossier, scenarios, source_filename="
 ## 5. Output Format Example
 
 ```markdown
-<functional_requirements>
-## Scenario / Control Definition: CHQD.058
+<scenario_detection_logic>
+## Parent Scenario & Control Specification: CHQD.058
 
-| Attribute | Details | Source |
+> **Context for LLM:** This section defines the parent scenario detection mechanics governing how individual transaction monitoring alerts are triggered. While individual Alert Definitions apply specific segment/risk thresholds, the rules below define the core financial crime typology, focal entity scope, transaction aggregation, and alert generation criteria.
+
+| Scenario Dimension | Specification | Source |
 |---|---|---|
-| Typology | Anomalies in the use of physical cash and/or cash equivalents... | scenarios.json |
-| Risk Type | TF | scenarios.json |
-| Focal Entity | Customer Centric | scenarios.json |
-| Generation Criteria | Only generate one alert per monitoring period | scenarios.json |
+| Typology Description | Anomalies in behaviour / Cheque Debits ThisMonth - NPO | scenarios.json |
+| Financial Crime Risk Type | TF | scenarios.json |
+| Focal Entity Level | Customer Centric | scenarios.json |
+| Alert Generation Policy | Only generate one alert per monitoring period | scenarios.json |
 
-### Applicable Conditions
-Customers who are Entity.
-Only the retail entity customer segments are included in this AD (SME, Mid Corp).
-Customer is NPO based on NAICs.
+### 1. Target Population & Applicability Conditions
+Defines customer segments, entity types, and classification filters required for this control to evaluate activity:
+Customers who are Entity (SME, Mid Corp). Flagged as NPO based on NAICs.
 
-### Detection Logic
-FCRM will create a customer profile and aggregate cheque debits over predefined period.
+### 2. Transaction Profiling & Aggregation Logic
+Defines how the monitoring engine profiles customer activity and aggregates transactional volume/value:
+FCRM will create a customer profile and aggregate the amount of cheque debit over a predefined period.
 
-### Alert Trigger Criteria
-The aggregated cheque debit amount is greater than or equal to the amount threshold.
+### 3. Single Alert Trigger Criteria
+Defines the exact conditional rule that evaluates aggregated metrics to fire a single transaction monitoring alert:
+The aggregated cheque debit amount is greater than or equal to the amount threshold. Customer is flagged as NPO based on NAICs.
 
-### Solution Definition Profiles
-- **Profile `IN-TC_D_CHEQ`**: Transaction Codes: `[CHEQ]` | Debit/Credit: `[DEBIT]`
-</functional_requirements>
+### 4. In-Scope Transaction Profiles
+- **Profile `IN-TC_D_CHEQ`**: Transaction Codes: `[CHEQ]` | Flow Direction: `[DEBIT]`
+</scenario_detection_logic>
 ```

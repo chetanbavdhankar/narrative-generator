@@ -32,42 +32,75 @@ def load_scenarios(filepath: str | Path) -> dict[str, Any]:
 
 
 def format_functional_block(code: str, info: dict[str, Any], source: str) -> str:
-    """Format qualitative functional logic consistent with dossier 3-column tables & prose standards."""
+    """Format scenario/control qualitative detection logic and alert generation rules."""
     esc = lambda v: str(v or "—").strip().replace("|", "\\|").replace("\n", " ")
     lines = [
-        "<functional_requirements>",
-        f"## Scenario / Control Definition: {code}\n",
-        "| Attribute | Details | Source |",
+        "<scenario_detection_logic>",
+        f"## Parent Scenario & Control Specification: {code}",
+        "",
+        "> **Context for LLM:** This section defines the parent scenario detection mechanics governing how individual transaction monitoring alerts are triggered. While individual Alert Definitions apply specific segment/risk thresholds, the rules below define the core financial crime typology, focal entity scope, transaction aggregation, and alert generation criteria.",
+        "",
+        "| Scenario Dimension | Specification | Source |",
         "|---|---|---|",
-        f"| Typology | {esc(info.get('Typology'))} | {source} |",
-        f"| Risk Type | {esc(info.get('Risk Type'))} | {source} |",
-        f"| Focal Entity | {esc(info.get('Focal Entity'))} | {source} |",
-        f"| Generation Criteria | {esc(info.get('Alert Generation Criteria'))} | {source} |\n",
+        f"| Typology Description | {esc(info.get('Typology'))} | {source} |",
+        f"| Financial Crime Risk Type | {esc(info.get('Risk Type'))} | {source} |",
+        f"| Focal Entity Level | {esc(info.get('Focal Entity'))} | {source} |",
+        f"| Alert Generation Policy | {esc(info.get('Alert Generation Criteria'))} | {source} |\n",
     ]
-    for key, heading in [("Conditions", "Applicable Conditions"), ("How to detect", "Detection Logic"),
-                         ("FCRM will generate an alert if", "Alert Trigger Criteria"), ("FCRM Scenario Logic", "Scenario Logic")]:
-        if info.get(key):
-            lines.extend([f"### {heading}", str(info[key]).strip(), ""])
+
+    if info.get("Conditions"):
+        lines.extend([
+            "### 1. Target Population & Applicability Conditions",
+            "Defines customer segments, entity types, and classification filters required for this control to evaluate activity:",
+            info["Conditions"].strip(),
+            ""
+        ])
+
+    if info.get("How to detect"):
+        lines.extend([
+            "### 2. Transaction Profiling & Aggregation Logic",
+            "Defines how the monitoring engine profiles customer activity and aggregates transactional volume/value:",
+            info["How to detect"].strip(),
+            ""
+        ])
+
+    if info.get("FCRM will generate an alert if"):
+        lines.extend([
+            "### 3. Single Alert Trigger Criteria",
+            "Defines the exact conditional rule that evaluates aggregated metrics to fire a single transaction monitoring alert:",
+            info["FCRM will generate an alert if"].strip(),
+            ""
+        ])
+
+    if info.get("FCRM Scenario Logic"):
+        lines.extend([
+            "### 4. Technical Scenario Logic",
+            info["FCRM Scenario Logic"].strip(),
+            ""
+        ])
+
     profiles = info.get("Solution Definition Profiles", [])
     if profiles:
-        lines.append("### Solution Definition Profiles")
+        lines.append("### 5. In-Scope Transaction Profiles")
         for p in profiles:
             p_name = p.get("profile", "—")
             tc = ", ".join(p.get("transaction_code", [])) or "—"
             dc = ", ".join(p.get("debit_credit", [])) or "—"
-            lines.append(f"- **Profile `{p_name}`**: Transaction Codes: `[{tc}]` | Debit/Credit: `[{dc}]`")
+            lines.append(f"- **Profile `{p_name}`**: Transaction Codes: `[{tc}]` | Flow Direction: `[{dc}]`")
         lines.append("")
-    lines.append("</functional_requirements>")
+
+    lines.append("</scenario_detection_logic>")
     return "\n".join(lines)
 
 
 def enrich(dossier_content: str, catalog: dict[str, Any], source_name: str) -> tuple[str, int]:
-    """Inject functional requirements into all matching <model> blocks."""
+    """Inject scenario detection logic into all matching <model> blocks."""
     count = 0
     def _inject(m: re.Match) -> str:
         nonlocal count
         block, ad_id = m.group(0), m.group(1)
-        if "<functional_requirements>" in block: return block
+        if "<scenario_detection_logic>" in block or "<functional_requirements>" in block:
+            return block
         code = extract_code(ad_id)
         info = catalog.get(code) or catalog.get(ad_id.strip().upper())
         if not info: return block
