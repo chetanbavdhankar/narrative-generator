@@ -6,38 +6,63 @@ Your task is to formulate a rigorous, evidence-backed hypothesis explaining why 
 
 # ABSOLUTE CONSTRAINTS (ZERO-HALLUCINATION POLICY)
 1. **STRICT CLOSED-WORLD ASSUMPTION**:
-   - You MUST rely **ONLY** on the data, metrics, flags, thresholds, customer taxonomy, and scenario logic explicitly provided in the attached dossier.
-   - **DO NOT** invent, assume, or extrapolate any external facts, macroeconomic events, unmentioned transaction channels, system errors, or numbers.
-   - If a fact or number is not explicitly in the dossier, it does not exist.
-2. **MANDATORY DATA LINEAGE CITATIONS**:
-   - Every single metric, count, delta, standard deviation, threshold, customer segment, and scenario rule cited in your response **MUST** include its exact source reference in square brackets (e.g., `[PL_RB_kri.xlsx/KRI_1]`, `[scenarios.json]`, `[AD_Taxonomy_Standard]`, `[Derived/Quarter_Resolution]`).
-   - Uncited claims are strictly prohibited.
-3. **MISSING DATA HANDLING**:
-   - If an essential data point needed to confirm a root cause is missing from the dossier, explicitly state: `[Data Limitation: <specific missing metric>]`. Do NOT guess or invent missing values.
+   - Rely **ONLY** on the data, metrics, flags, thresholds, customer taxonomy, and scenario logic explicitly provided in the attached dossier.
+   - **DO NOT** invent or extrapolate any unmentioned facts, external events, or numbers. If a data point is missing, state `[Data Limitation: <metric>]`.
+2. **MANDATORY CITATION CONVENTION**:
+   - Every single metric, count, delta, threshold, customer segment, and scenario rule cited MUST include an exact reference tag in the format: `[REF: <domain>.<metric>=<value>]` or `[REF: <source_table>.<metric>=<value>]`.
+   - Examples: `[REF: triggered_kris.test_quarter_count=1212]`, `[REF: identity.Target_Segment=Retail_Entity]`, `[REF: flags.ths_changed_ad_flag=0]`, `[REF: kpi_metrics.kpi2b_productive_alert_rate=21.6%]`.
 
 ---
 
-# REQUIRED 4-PART OUTPUT STRUCTURE
+# REQUIRED OUTPUT FORMAT & BLUEPRINT
 
-### 1. Primary Hypothesis Statement
-- A concise, objective hypothesis stating the most probable root cause of the KRI trigger (e.g., volume surge driven by SME entity activity breaching amount thresholds, effectiveness decay due to low true positive capture, or parameter sensitivity at boundary limits).
-- Must directly relate the configured customer segment (`CTC`), risk category, and monitoring window to the triggered KRI.
+Produce your output matching this exact four-part structure:
 
-### 2. Supporting Evidence & Lineage Citations
-- 3 to 5 factual bullet points extracted directly from the dossier.
-- State exact metrics, deltas, 3-sigma flags, and consecutive triggers with their bracketed source citations:
-  - *Example:* `Test quarter alert volume reached 142 alerts vs base quarter of 85 alerts (difference: +57 alerts, >=3-sigma exceeded) [Source: PL_RB_kri.xlsx/KRI_1].`
-  - *Example:* `Rule is configured for Retail - Entity customers (Code: 09) under High Risk tier (Code: 01) [Source: AD_Taxonomy_Standard].`
+```text
+Hypothesis Statement
+[1-2 sentences stating the core root cause of the KRI trigger, connecting customer segment/risk scope, scenario mechanics, and observed volume/conversion shifts.]
 
-### 3. Step-by-Step Causal Chain
-- Formulate a strict 3-step logical progression grounded exclusively in the dossier's qualitative logic and quantitative metrics:
-  1. **[Root Activity / Population Driver]**: What customer activity or segment scope was monitored based on the dossier?
-  2. **[Detection Mechanism Impact]**: How did the scenario's aggregation window (`XY`) and amount/frequency thresholds process this activity?
-  3. **[Mathematical KRI Breach]**: Why did this trigger the specific KRI rule (e.g., volume delta exceeding $\pm 3\sigma$ threshold or $\ge 2$ consecutive quarter persistence)?
+Evidence Points (3-5)
+1. [Metric 1 claim] [REF: domain.metric=value]
+2. [Metric 2 claim] [REF: domain.metric=value]
+3. [Metric 3 claim] [REF: domain.metric=value]
+4. [Thresholds / Flags claim] [REF: domain.metric=value]
+5. [Conversion / Quality claim] [REF: domain.metric=value]
 
-### 4. Alternative Explanations & Counter-Evidence Check
-- Evaluate 1–2 plausible alternative explanations using available dossier flags and metrics (e.g., check `thresholds_changed_flag`, `deactivated_flag`, `newly_active_flag`, or historical monthly trends).
-- State why the primary hypothesis remains the most substantiated conclusion based strictly on the evidence.
+Causal Chain
+[Factor 1] -> [Factor 2] -> [Scenario Processing Impact] -> [Mathematical KRI Trigger] -> [Risk Assessment] -> [Recommended Action Direction]
+
+Alternative Explanations Considered
+• [Alternative 1 (e.g. Threshold change)] — ruled out: [reason / flag citation, e.g. flags.ths_changed_ad_flag=0]
+• [Alternative 2 (e.g. Data pipeline / Ingestion anomaly)] — ruled out: [reason / metric check]
+• [Alternative 3 (e.g. Seasonal distortion)] — ruled out: [reason / historical quarterly context check]
+```
+
+---
+
+# FEW-SHOT REFERENCE BLUEPRINT (TARGET PROTOTYPE)
+
+```text
+## TM Expert Hypothesis
+
+Hypothesis Statement
+The +47.3% alert volume deviation is primarily driven by an increase in eligible transaction activity following customer population expansion in the target Retail Entity segment, generating proportionally more alerts under the DTRX.076 structuring scenario without indicating a degradation in detection logic.
+
+Evidence Points (5)
+1. Test quarter count = 1,212 vs base = 823 -> +389 alerts (+47.3%) [REF: triggered_kris.kri1_test_quarter_count=1212]
+2. >=3-Sigma threshold exceeded in test quarter [REF: triggered_kris.kri1_three_sigma_exceeded=1]
+3. Rule configured for Retail Entity under High Risk tier [REF: identity.Target_Segment=Retail_Entity]
+4. Thresholds unchanged — no parameter modification contribution [REF: flags.ths_changed_ad_flag=0]
+5. Productive alert rate stable at 21.6% — detection precision maintained [REF: kpi_metrics.kpi2b_productive_alert_rate=21.6%]
+
+Causal Chain
+Target segment growth -> Higher transaction volume -> Larger eligible population -> +47.3% alert volume -> >=3-Sigma KRI 1 trigger -> Low Risk (business-driven) -> Note & observe next quarter
+
+Alternative Explanations Considered
+• Threshold change — ruled out: flags.ths_changed_ad_flag=0
+• Systemic control degradation — ruled out: productive alert rate remains stable [REF: kpi_metrics.kpi2b_productive_alert_rate=21.6%]
+• Data pipeline failure — ruled out: underlying customer counts consistent across quarters [REF: kpi_metrics.kpi3_customer_count]
+```
 
 ---
 
