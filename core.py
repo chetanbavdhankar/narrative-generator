@@ -254,6 +254,10 @@ def load_tables(
         for s in xls.sheet_names:
             raw_df = pd.read_excel(xls, sheet_name=s)
             cleaned_df = _clean_dataframe(raw_df)
+            if not cleaned_df.empty:
+                cleaned_df["_source_file"] = f.name
+                cleaned_df["_source_sheet"] = s
+                cleaned_df["_source_ref"] = f"{f.name}/{s}"
             if s in tables:
                 # Merge across files without index clashes
                 merged = pd.concat([tables[s], cleaned_df], ignore_index=True)
@@ -340,6 +344,7 @@ def _kri1(row, qi):
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     bench_q = format_quarter(_s(row.get("benchmark_quarter")))
+    s_ref = str(row.get("_source_ref") or "KRI_1")
     for sfx, label in [("incrs", "increase"), ("dcrs", "decrease")]:
         col = f"KRI_1_{sfx}"
         if col in row.index and _is_one(row.get(col)):
@@ -357,6 +362,7 @@ def _kri1(row, qi):
                 "three_sigma_exceeded": _s(row.get(f"KRI_1_{sfx}_three_sigma_exceeded")),
                 "consecutive_trigger": _s(row.get(f"KRI_1_{sfx}_with_consecutive")),
                 "monthly_trend": _trend(row, qi.test_months),
+                "source": s_ref,
             }))
     if not results and _is_one(row.get("KRI_1")):
         results.append(_strip({
@@ -367,7 +373,8 @@ def _kri1(row, qi):
             "test_quarter_count": _s(row.get("test_quarter_count")),
             "base_quarter_count": _s(row.get("base_quarter_count")),
             "difference": _s(row.get("test_base_quarter_diff")),
-            "monthly_trend": _trend(row, qi.test_months)
+            "monthly_trend": _trend(row, qi.test_months),
+            "source": s_ref,
         }))
     return results
 
@@ -376,6 +383,7 @@ def _kri2(row, qi):
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     bench_q = format_quarter(_s(row.get("benchmark_quarter")))
+    s_ref = str(row.get("_source_ref") or "KRI_2")
     return [_strip({
         "kri": "KRI_2",
         "test_quarter": t_q,
@@ -390,6 +398,7 @@ def _kri2(row, qi):
         "three_sigma_exceeded": _s(row.get("KRI_2_dcrs_three_sigma_exceeded")),
         "consecutive_trigger": _s(row.get("KRI_2_dcrs_with_consecutive")),
         "monthly_trend": _trend(row, qi.test_months),
+        "source": s_ref,
     })]
 
 
@@ -398,6 +407,7 @@ def _kri3(row, qi):
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
     b_q = format_quarter(_s(row.get("base_quarter"))) or qi.base
     bench_q = format_quarter(_s(row.get("benchmark_quarter")))
+    s_ref = str(row.get("_source_ref") or "KRI_3")
     for label, col in [("amount", "KRI_3_amount"), ("freq", "KRI_3_freq"),
                         ("perc_avg", "KRI_3_perc_avg_without_consecutive")]:
         if col in row.index and _is_one(row.get(col)):
@@ -414,6 +424,7 @@ def _kri3(row, qi):
                 "alert_count": _s(row.get("alert_count")),
                 "false_positive_rate": _s(row.get("false_positive_rate")),
                 "true_positive_rate": _s(row.get("true_positive_rate")),
+                "source": s_ref,
             }))
     if not results and _is_one(row.get("KRI_3")):
         results.append(_strip({
@@ -423,13 +434,15 @@ def _kri3(row, qi):
             "benchmark_quarter": bench_q,
             "alert_count": _s(row.get("alert_count")),
             "false_positive_rate": _s(row.get("false_positive_rate")),
-            "true_positive_rate": _s(row.get("true_positive_rate"))
+            "true_positive_rate": _s(row.get("true_positive_rate")),
+            "source": s_ref,
         }))
     return results
 
 
 def _kri6(row, qi):
     t_q = format_quarter(_s(row.get("test_quarter"))) or qi.test
+    s_ref = str(row.get("_source_ref") or "KRI_6")
     return [_strip({
         "kri": "KRI_6",
         "test_quarter": t_q,
@@ -438,6 +451,7 @@ def _kri6(row, qi):
         "test_quarter_minus_2_alerts": _s(row.get("test_quarter_minus_2_alert_count")),
         "total_monitoring_alerts": _s(row.get("total_count")),
         "oldest_benchmark_period": format_quarter(_s(row.get("oldest_benchmark_period"))) or _s(row.get("oldest_benchmark_period")),
+        "source": s_ref,
     })]
 
 
@@ -477,17 +491,19 @@ def filter_kris(tables, qi):
                 b_bench = _period_to_qnum(bench_val)
                 b_base = _period_to_qnum(base_val)
                 if b_bench is not None and b_base is not None:
-                    # ONLY select if base_quarter is strictly higher than benchmark_quarter (not equal, not less than)
+                    # ONLY select if base_quarter is strictly higher than benchmark_quarter
                     if not (b_base > b_bench):
                         continue
 
             ad = str(row.get("alert_definition", "?"))
+            s_ref = str(row.get("_source_ref") or f"{sheet}")
             meta = _strip({
                 "identity": _identity(row),
                 "thresholds": _thresholds(row),
                 "flags": _flags(row),
                 "recommendation": _s(row.get("recommendation")),
                 "final_recommendation": _s(row.get("final_recommendation")),
+                "_source": s_ref,
             })
             for ev in extractor(row, qi):
                 ev["_meta"] = meta
@@ -564,8 +580,10 @@ def enrich_kpis(tables, triggered_ads, qi):
         for _, row in df.iterrows():
             ad = str(row.get("alert_definition", ""))
             val = _s(row.get(qc))
+            s_ref = str(row.get("_source_ref") or f"{sheet}")
             if val is not None:
                 data.setdefault(ad, {})[out_key] = val
+                data.setdefault(ad, {}).setdefault("_sources", {})[out_key] = s_ref
                 avail.setdefault(ad, []).append(sheet)
                 n += 1
         print(f"  [KPI] {sheet}: {n} enriched")
@@ -584,10 +602,12 @@ def enrich_kpis(tables, triggered_ads, qi):
         n = 0
         for _, row in df.iterrows():
             ad = str(row.get("alert_definition", ""))
+            s_ref = str(row.get("_source_ref") or f"{sheet}")
             ev = {short: _s(row.get(src)) for src, short in cfg["cols"].items()
                   if _s(row.get(src)) is not None}
             if ev:
                 data.setdefault(ad, {})[cfg["key"]] = ev
+                data.setdefault(ad, {}).setdefault("_sources", {})[cfg["key"]] = s_ref
                 avail.setdefault(ad, []).append(sheet)
                 n += 1
         print(f"  [KPI] {sheet}: {n} enriched")
@@ -595,14 +615,215 @@ def enrich_kpis(tables, triggered_ads, qi):
     return data, avail
 
 
+# ── Markdown Dossier Serialization ─────────────────────────────────────────
+
+def _escape_md(val: Any) -> str:
+    if val is None:
+        return "—"
+    s = str(val).strip()
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
+def _format_metric_row(metric: str, val: Any, source: str) -> str:
+    return f"    | {_escape_md(metric)} | {_escape_md(val)} | {_escape_md(source)} |"
+
+
+def serialize_dossier_markdown(ad_block: dict[str, Any]) -> str:
+    """Serialize a single alert definition data block into an LLM-optimized XML-tagged Markdown dossier."""
+    ad = ad_block.get("alert_definition", "UNKNOWN")
+    identity = ad_block.get("identity", {})
+    thresholds = ad_block.get("thresholds", {})
+    flags = ad_block.get("flags", {})
+    quarters = ad_block.get("quarters", {})
+    triggered_kris = ad_block.get("triggered_kris", [])
+    kpi_context = ad_block.get("kpi_context", {})
+    kpi_sources = kpi_context.get("_sources", {})
+    rec = ad_block.get("recommendation")
+    default_src = ad_block.get("_source", "Excel")
+
+    parts: list[str] = []
+    parts.append(f'<model id="{ad}" code="{ad}">\n')
+    parts.append("<structured_metrics>")
+
+    # 1. Identity Domain
+    parts.append('  <domain name="identity">')
+    parts.append("    | Metric | Value | Source |")
+    parts.append("    |--------|-------|--------|")
+    id_labels = [
+        ("country", "Country"),
+        ("business_line", "Business Line"),
+        ("segment_desc", "Segment Description"),
+        ("customer_type_code", "Customer Type Code"),
+        ("customer_risk", "Customer Risk"),
+    ]
+    for k, label in id_labels:
+        if k in identity and identity[k]:
+            parts.append(_format_metric_row(label, identity[k], default_src))
+    parts.append("  </domain>\n")
+
+    # 2. Quarterly Context Domain
+    parts.append('  <domain name="quarterly_context">')
+    parts.append("    | Metric | Value | Source |")
+    parts.append("    |--------|-------|--------|")
+    if "ingestion" in quarters:
+        parts.append(_format_metric_row("Ingestion Quarter", quarters["ingestion"], "Derived/Quarter_Resolution"))
+    if "test" in quarters:
+        parts.append(_format_metric_row("Test Quarter (Evaluation)", quarters["test"], "Derived/Quarter_Resolution"))
+    if "base" in quarters:
+        parts.append(_format_metric_row("Base Quarter (Baseline)", quarters["base"], "Derived/Quarter_Resolution"))
+    elif "base_quarters" in quarters:
+        parts.append(_format_metric_row("Base Quarters (Baseline)", ", ".join(quarters["base_quarters"]), "Derived/Quarter_Resolution"))
+    parts.append("  </domain>\n")
+
+    # 3. Thresholds Domain
+    if thresholds:
+        parts.append('  <domain name="thresholds">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        th_labels = [
+            ("min_amount_threshold", "Min Amount Threshold"),
+            ("min_freq_threshold", "Min Frequency Threshold"),
+            ("max_amount_threshold", "Max Amount Threshold"),
+        ]
+        for k, label in th_labels:
+            if k in thresholds:
+                parts.append(_format_metric_row(label, thresholds[k], default_src))
+        parts.append("  </domain>\n")
+
+    # 4. Flags Domain
+    if flags:
+        parts.append('  <domain name="flags">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        for k, v in flags.items():
+            label = k.replace("_", " ").title()
+            parts.append(_format_metric_row(label, v, default_src))
+        parts.append("  </domain>\n")
+
+    # 5. Triggered KRIs Domain
+    if triggered_kris:
+        parts.append('  <domain name="triggered_kris">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        for ev in triggered_kris:
+            kri_name = ev.get("kri", "KRI")
+            ev_src = ev.get("source", default_src)
+            prefix = f"{kri_name}"
+            if "direction" in ev:
+                prefix += f" ({ev['direction']})"
+            elif "sub_trigger" in ev:
+                prefix += f" ({ev['sub_trigger']})"
+
+            for field, label in [
+                ("test_quarter_count", f"{prefix} Test Quarter Count"),
+                ("base_quarter_count", f"{prefix} Base Quarter Count"),
+                ("difference", f"{prefix} Difference (Test - Base)"),
+                ("full_period_avg_count", f"{prefix} Full Period Avg Count"),
+                ("full_period_stddev_count", f"{prefix} Full Period Stddev"),
+                ("three_sigma_exceeded", f"{prefix} 3-Sigma Exceeded"),
+                ("consecutive_trigger", f"{prefix} Consecutive Trigger"),
+                ("alert_count", f"{prefix} Alert Count"),
+                ("test_quarter_accum_ratio_amount", f"{prefix} Test Accum Ratio"),
+                ("base_quarter_accum_ratio_amount", f"{prefix} Base Accum Ratio"),
+                ("amount_deviation", f"{prefix} Amount Deviation"),
+                ("frequency_deviation", f"{prefix} Frequency Deviation"),
+                ("false_positive_rate", f"{prefix} False Positive Rate"),
+                ("true_positive_rate", f"{prefix} True Positive Rate"),
+                ("test_quarter_alerts", f"{prefix} Test Alerts"),
+                ("test_quarter_minus_1_alerts", f"{prefix} Test-1 Alerts"),
+                ("test_quarter_minus_2_alerts", f"{prefix} Test-2 Alerts"),
+                ("total_monitoring_alerts", f"{prefix} Total Alerts"),
+                ("oldest_benchmark_period", f"{prefix} Oldest Benchmark"),
+            ]:
+                if field in ev and ev[field] is not None:
+                    parts.append(_format_metric_row(label, ev[field], ev_src))
+
+            if "monthly_trend" in ev and ev["monthly_trend"]:
+                trend_str = " | ".join(f"{k}: {v}" for k, v in ev["monthly_trend"].items())
+                parts.append(_format_metric_row(f"{prefix} Monthly Trend", trend_str, ev_src))
+        parts.append("  </domain>\n")
+
+    # 6. KPI Metrics Domain
+    if kpi_context:
+        parts.append('  <domain name="kpi_metrics">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        kpi_labels = [
+            ("kpi1_alert_count", "Alert Count (KPI_1)", "KPI_1"),
+            ("kpi2b_productive_alert_rate", "Productive Alert Rate % (KPI_2b)", "KPI_2b"),
+            ("kpi3_customer_count", "Customer Count (KPI_3)", "KPI_3"),
+            ("kpi6_value", "KPI 6 Metric Value", "KPI_6"),
+            ("kpi11_value", "KPI 11 Metric Value", "KPI_11"),
+            ("kpi12_value", "KPI 12 Metric Value", "KPI_12"),
+            ("kpi15a_value", "KPI 15a Metric Value", "KPI_15a"),
+            ("kpi15b_value", "KPI 15b Metric Value", "KPI_15b"),
+            ("kpi16_unique_customers", "Unique Customers (KPI_16)", "KPI_16"),
+            ("kpi17_value", "KPI 17 Metric Value", "KPI_17"),
+        ]
+        for key, label, default_sheet in kpi_labels:
+            if key in kpi_context:
+                src = kpi_sources.get(key, default_sheet)
+                parts.append(_format_metric_row(label, kpi_context[key], src))
+
+        # Structured KPI 17
+        if "kpi17_quarterly_metrics" in kpi_context:
+            src = kpi_sources.get("kpi17_quarterly_metrics", "KPI_17_quarter")
+            for sub_k, sub_v in kpi_context["kpi17_quarterly_metrics"].items():
+                label = f"KPI_17 Quarterly {sub_k.replace('_', ' ').title()}"
+                parts.append(_format_metric_row(label, sub_v, src))
+
+        # Structured KPI 18
+        if "kpi18_quarterly_thresholds" in kpi_context:
+            src = kpi_sources.get("kpi18_quarterly_thresholds", "KPI_18_quarter")
+            for sub_k, sub_v in kpi_context["kpi18_quarterly_thresholds"].items():
+                label = f"KPI_18 Quarterly {sub_k.replace('_', ' ').title()}"
+                parts.append(_format_metric_row(label, sub_v, src))
+        parts.append("  </domain>\n")
+
+    # 7. Governance & Recommendations Domain
+    if rec:
+        parts.append('  <domain name="governance_recommendations">')
+        parts.append("    | Metric | Value | Source |")
+        parts.append("    |--------|-------|--------|")
+        parts.append(_format_metric_row("Recommendation", rec, default_src))
+        parts.append("  </domain>\n")
+
+    parts.append("</structured_metrics>\n")
+    parts.append("</model>\n")
+    return "\n".join(parts)
+
+
+def serialize_relevance_matrix_markdown(matrix: list[dict[str, Any]], country: str, bl: str, quarter: str) -> str:
+    """Serialize the alert definition trigger relevance matrix to a Markdown table."""
+    lines = [
+        f"# Transaction Monitoring Relevance Matrix — {country.upper()}/{bl.upper()} ({quarter})\n",
+        "| Alert Definition | Triggered KRIs | Trigger Details | Available KPIs |",
+        "|---|---|---|---|",
+    ]
+    for row in matrix:
+        ad = _escape_md(row.get("alert_definition", ""))
+        kris = _escape_md(", ".join(row.get("triggered_kris", [])))
+        subs = []
+        for k, vals in row.get("kri_sub_triggers", {}).items():
+            subs.append(f"{k}: {', '.join(vals)}")
+        subs_str = _escape_md("; ".join(subs) if subs else "Standard")
+        kpis = _escape_md(", ".join(row.get("available_kpis", [])) or "None")
+        lines.append(f"| {ad} | {kris} | {subs_str} | {kpis} |")
+    return "\n".join(lines) + "\n"
+
+
 # ── Context assembly ────────────────────────────────────────────────────────
 
 def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
     out = Path(str(output_dir).strip(' "\''))
     out.mkdir(parents=True, exist_ok=True)
+    per_model_dir = out / "per_model"
+    per_model_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{country.upper()}_{bl.upper()}_{qi.ingestion}"
 
     context, matrix = [], []
+    dossier_markdowns = []
+
     for ad, evidences in sorted(kri_results.items()):
         meta = {}
         for ev in evidences:
@@ -610,6 +831,8 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
                 if k not in meta and v: meta[k] = v
 
         block = {"alert_definition": ad}
+        if meta.get("_source"):
+            block["_source"] = meta["_source"]
         for k in ("identity", "thresholds", "flags"):
             if meta.get(k): block[k] = meta[k]
 
@@ -633,6 +856,14 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         if ad in kpi_data: block["kpi_context"] = kpi_data[ad]
         context.append(block)
 
+        # Generate individual XML-tagged Markdown Dossier
+        md_content = serialize_dossier_markdown(block)
+        dossier_markdowns.append(md_content)
+
+        safe_name = ad.lower().replace(" ", "_").replace("/", "_").replace("\\", "_")
+        single_dossier_path = per_model_dir / f"{safe_name}_dossier.md"
+        single_dossier_path.write_text(md_content, encoding="utf-8")
+
         kris = sorted({ev.get("kri", "") for ev in evidences})
         subs = {}
         for ev in evidences:
@@ -646,8 +877,22 @@ def build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl):
         entry["available_kpis"] = kpi_avail.get(ad, [])
         matrix.append(entry)
 
+    # Write Combined Dossiers Markdown
+    combined_dossier_path = out / f"{prefix}_dossiers.md"
+    combined_dossier_path.write_text("\n\n".join(dossier_markdowns), encoding="utf-8")
+    print(f"  -> [Dossiers Markdown] {combined_dossier_path}")
+    print(f"  -> [Per-Model Dossiers] {len(context)} files in {per_model_dir}")
+
+    # Write Markdown Relevance Matrix Table
+    matrix_md_path = out / f"{prefix}_relevance_matrix.md"
+    matrix_md_path.write_text(serialize_relevance_matrix_markdown(matrix, country, bl, qi.ingestion), encoding="utf-8")
+    print(f"  -> [Relevance Matrix MD] {matrix_md_path}")
+
+    # Backward compatibility: Write JSON payloads
     for name, data in [("quantitative_context", context), ("relevance_matrix", matrix)]:
         p = out / f"{prefix}_{name}.json"
         p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-        print(f"  -> {p}")
-    print(f"[Output] {len(context)} alert definition(s)")
+        print(f"  -> [JSON Payload] {p}")
+
+    print(f"[Output] Generated dossiers for {len(context)} alert definition(s)")
+

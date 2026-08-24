@@ -1,6 +1,6 @@
-# Narrative Generator — KRI/KPI Quantitative Context Builder
+# Narrative Generator — KRI/KPI Quantitative Context & Dossier Builder
 
-A lightweight, high-performance Python ETL pipeline for Transaction Monitoring (TM). It scans quarterly Excel workbooks, filters alert definitions with triggered Key Risk Indicators (KRIs), enriches them with Key Performance Indicator (KPI) metrics, and generates compact JSON context payloads for local ~2B-parameter LLMs.
+A lightweight, high-performance Python ETL pipeline for Transaction Monitoring (TM). It scans quarterly Excel workbooks, filters alert definitions with triggered Key Risk Indicators (KRIs), enriches them with Key Performance Indicator (KPI) metrics, tracks exact file and sheet source citations, and generates LLM-optimized XML-tagged Markdown dossiers alongside JSON context payloads.
 
 ---
 
@@ -51,19 +51,22 @@ RUNS = [
 Input Excel Files (e.g. input/PL_RB_*.xlsx)
                  │
                  ▼
-      [core.py: load_tables] ── Fast openpyxl reader & column normalizer
+      [core.py: load_tables] ── Fast openpyxl reader & source provenance tagger (file + sheet)
                  │
                  ▼
      [core.py: resolve_quarter] ── Ingestion / Test / Base quarter derivation
                  │
                  ▼
-      [core.py: filter_kris] ── Filter triggered alert definitions (KRI == 1)
+      [core.py: filter_kris] ── Filter triggered alert definitions (KRI == 1) with provenance
                  │
                  ▼
-      [core.py: enrich_kpis] ── Vectorized KPI pull for triggered alert definitions
+      [core.py: enrich_kpis] ── Vectorized KPI pull with sheet references
                  │
                  ▼
       [core.py: build_output]
+                 ├── <COUNTRY>_<BL>_<QUARTER>_dossiers.md (Combined Dossiers)
+                 ├── per_model/<ad>_dossier.md (Isolated Model Dossiers)
+                 ├── <COUNTRY>_<BL>_<QUARTER>_relevance_matrix.md
                  ├── <COUNTRY>_<BL>_<QUARTER>_quantitative_context.json
                  └── <COUNTRY>_<BL>_<QUARTER>_relevance_matrix.json
 ```
@@ -72,7 +75,8 @@ Input Excel Files (e.g. input/PL_RB_*.xlsx)
 
 | File | Role |
 |---|---|
-| [`core.py`](core.py) | **ETL Engine**: Quarter arithmetic, Excel loader, KRI filter, vectorized KPI enricher, and JSON context builder |
+| [`core.py`](core.py) | **ETL & Dossier Engine**: Quarter arithmetic, Excel loader with provenance, KRI filter, KPI enricher, and XML-tagged Markdown Dossier serializer |
+| [`scenario_enrichment/`](scenario_enrichment/) | **Qualitative Enricher (Standalone)**: CLI & engine to inject scenario definitions (`scenarios.json`) into quantitative dossiers |
 | [`app.py`](app.py) | **Web Server & UI**: Flask endpoints (`/api/scan`, `/api/run`, `/api/browse`) with embedded dark-mode UI |
 | [`main.py`](main.py) | **CLI Entry Point**: Parses command-line arguments and runs the pipeline |
 | [`run.ipynb`](run.ipynb) | **Interactive Notebook**: Batch processing and interactive testing |
@@ -85,8 +89,9 @@ Input Excel Files (e.g. input/PL_RB_*.xlsx)
   - `ingestion_quarter` (e.g. `Q1_2026`) = current run period.
   - `test_quarter` = ingestion − 2 quarters (`Q3_2025`, evaluation period).
   - `base_quarter` = ingestion − 3 quarters (`Q2_2025`, baseline period).
+- **Provenance & Citations**: Every single data point captures its origin (`<Filename>.xlsx/<SheetName>`), enabling LLMs to generate verifiable narrative citations.
 - **KRI Trigger Evaluation**: Inspects sheets `KRI_1`, `KRI_2`, `KRI_3`, and `KRI_6`. Filters alert definitions where the trigger flag `== 1`.
-- **KPI Enrichment**: Pre-filters KPI sheets (`KPI_1`, `KPI_2b`, `KPI_3`, `KPI_6`, `KPI_11`, `KPI_12`, `KPI_15a/b`, `KPI_16`, `KPI_17`, `KPI_18`) exclusively for the triggered alert definitions.
+- **KPI Enrichment**: Pre-filters KPI sheets (`KPI_1`, `KPI_2b`, `KPI_3`, `KPI_6`, `KPI_11`, `KPI_12`, `KPI_15a/b`, `KPI_16`, `KPI_17`, `KPI_18`) exclusively for triggered alert definitions.
 
 ---
 
@@ -99,45 +104,86 @@ Input files must include `<Country>_<BusinessLine>` separated by underscores (`_
   - **RB** synonyms: `RB`, `Retail`, `Retail_Bank`, `Retail_Banking`, `RetailBank`, `RetailBanking`
   - **WB** synonyms: `WB`, `Wholesale`, `Wholesale_Bank`, `Wholesale_Banking`, `WholesaleBank`, `WholesaleBanking`
 
-### Valid Examples
-- `PL_RB_kri.xlsx` $\rightarrow$ Country: `PL`, Business Line: `RB`
-- `2026_Q1_PL_retail_banking_kpi.xlsx` $\rightarrow$ Country: `PL`, Business Line: `RB`
-- `alert_data_RO_wholesale_bank.xlsx` $\rightarrow$ Country: `RO`, Business Line: `WB`
-- `FR_retail_2026.xlsx` $\rightarrow$ Country: `FR`, Business Line: `RB`
-- `data_CH_WB.xlsx` $\rightarrow$ Country: `CH`, Business Line: `WB`
-
 ---
 
-## 5. Output Deliverables & Examples
+## 5. Output Deliverables & Formats
 
-The pipeline writes two complementary JSON artifacts per run to the `output/` directory:
+The pipeline generates both XML-tagged Markdown Dossiers (for prompt injection / narrative drafting) and JSON payloads (for programmatic parsing):
 
-### Deliverable 1: `quantitative_context.json`
-Abbreviation-dense context payload formatted for direct local LLM ingestion (~800–1000 tokens per alert definition).
+### Deliverable 1: XML-Tagged Markdown Dossiers (`_dossiers.md` and `per_model/<ad>_dossier.md`)
+High-signal, structured markdown tables enclosed in semantic XML tags with explicit source citations per row:
 
-```json
-[
-  {
-    "alert_definition": "AD_PL_RB_001",
-    "identity": {
-      "country": "PL",
-      "business_line": "RB",
-      "segment_desc": "Retail Banking",
-      "customer_type_code": "INDV",
-      "customer_risk": "HIGH"
-    },
-    "thresholds": {
-      "min_amount_threshold": 15000,
-      "min_frequency_threshold": 5
-    },
-    "flags": {
-      "many_alerts_flag": 1,
-      "lowest_amount_threshold_flag": 0,
-      "thresholds_changed_flag": 0
-    },
-    "quarters": {
-      "ingestion": "Q1_2026",
-      "test": "Q3_2025",
+```markdown
+<model id="AD_PL_RB_001" code="AD_PL_RB_001">
+
+<structured_metrics>
+  <domain name="identity">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Country | PL | PL_RB_kri.xlsx/KRI_1 |
+    | Business Line | RB | PL_RB_kri.xlsx/KRI_1 |
+    | Segment Description | Retail Banking | PL_RB_kri.xlsx/KRI_1 |
+    | Customer Type Code | INDV | PL_RB_kri.xlsx/KRI_1 |
+    | Customer Risk | HIGH | PL_RB_kri.xlsx/KRI_1 |
+  </domain>
+
+  <domain name="quarterly_context">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Ingestion Quarter | Q1_2026 | Derived/Quarter_Resolution |
+    | Test Quarter (Evaluation) | Q3_2025 | Derived/Quarter_Resolution |
+    | Base Quarter (Baseline) | Q2_2025 | Derived/Quarter_Resolution |
+  </domain>
+
+  <domain name="thresholds">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Min Amount Threshold | 15000 | PL_RB_kri.xlsx/KRI_1 |
+    | Min Frequency Threshold | 5 | PL_RB_kri.xlsx/KRI_1 |
+  </domain>
+
+  <domain name="flags">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Many Alerts Flag | 1 | PL_RB_kri.xlsx/KRI_1 |
+    | Lowest Amount Threshold Flag | 0 | PL_RB_kri.xlsx/KRI_1 |
+    | Thresholds Changed Flag | 0 | PL_RB_kri.xlsx/KRI_1 |
+  </domain>
+
+  <domain name="triggered_kris">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | KRI_1 (increase) Test Quarter Count | 142 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Base Quarter Count | 85 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Difference (Test - Base) | 57 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Full Period Avg Count | 90.2 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Full Period Stddev | 12.4 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) 3-Sigma Exceeded | 1 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Consecutive Trigger | 1 | PL_RB_kri.xlsx/KRI_1 |
+    | KRI_1 (increase) Monthly Trend | month_1: 40 | month_2: 48 | month_3: 54 | PL_RB_kri.xlsx/KRI_1 |
+  </domain>
+
+  <domain name="kpi_metrics">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Alert Count (KPI_1) | 142 | PL_RB_kpi.xlsx/KPI_1 |
+    | Productive Alert Rate % (KPI_2b) | 18.5 | PL_RB_kpi.xlsx/KPI_2b |
+    | Customer Count (KPI_3) | 110 | PL_RB_kpi.xlsx/KPI_3 |
+    | KPI_17 Quarterly Alert Count | 142 | PL_RB_kpi.xlsx/KPI_17_quarter |
+    | KPI_17 Quarterly True Positive Count | 26 | PL_RB_kpi.xlsx/KPI_17_quarter |
+    | KPI_17 Quarterly False Positive Rate | 0.817 | PL_RB_kpi.xlsx/KPI_17_quarter |
+    | KPI_17 Quarterly General Overlap Ratio | 0.12 | PL_RB_kpi.xlsx/KPI_17_quarter |
+  </domain>
+
+  <domain name="governance_recommendations">
+    | Metric | Value | Source |
+    |--------|-------|--------|
+    | Recommendation | Review threshold adjustment | PL_RB_kri.xlsx/KRI_1 |
+  </domain>
+</structured_metrics>
+
+</model>
+```
       "base": "Q2_2025"
     },
     "triggered_kris": [

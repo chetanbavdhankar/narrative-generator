@@ -8,12 +8,12 @@ from core import resolve_quarter, load_tables, filter_kris, enrich_kpis, build_o
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Build LLM context from TM KRI/KPI data.")
+    ap = argparse.ArgumentParser(description="Build LLM context dossiers from TM KRI/KPI data.")
     ap.add_argument("--country", required=True, help="2-letter country code (e.g. PL, RO, FR)")
     ap.add_argument("--business-line", required=True, help="Business line (e.g. RB, WB)")
     ap.add_argument("--ingestion-quarter", required=True, help="Ingestion quarter (e.g. Q1_2026)")
     ap.add_argument("--input-dir", default="input/", help="Directory containing Excel workbooks (default: input/)")
-    ap.add_argument("--output-dir", default="output/", help="Directory for generated JSON files (default: output/)")
+    ap.add_argument("--output-dir", default="output/", help="Directory for generated dossier markdown and JSON files (default: output/)")
     args = ap.parse_args()
     t0 = time.perf_counter()
 
