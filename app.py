@@ -181,93 +181,6 @@ def run_pipeline():
     })
 
 
-@app.post("/api/run/stream")
-def run_pipeline_stream():
-    """Stream live multi-step execution telemetry via Server-Sent Events (SSE)."""
-    data = request.json or {}
-    input_dir = str(data.get("input_dir", "")).strip(' "\'')
-    output_dir = str(data.get("output_dir", "")).strip(' "\'')
-    quarter = str(data.get("ingestion_quarter", "")).strip()
-    scenarios_file = str(data.get("scenarios_file", "")).strip(' "\'') or None
-    combos = data.get("combos", [])
-
-    def generate():
-        import json, time
-        if not input_dir or not output_dir or not quarter or not combos:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Missing required input parameters'})}\n\n"
-            return
-
-        try:
-            qi = resolve_quarter(quarter)
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid quarter format: {e}'})}\n\n"
-            return
-
-        yield f"data: {json.dumps({'type': 'init', 'quarter': qi.ingestion, 'test': qi.test, 'base': qi.base, 'total_combos': len(combos)})}\n\n"
-
-        overall_results = []
-        for combo_idx, combo in enumerate(combos, 1):
-            country, bl = combo["country"], combo["business_line"]
-            chosen_files = combo.get("files", [])
-            label = f"{country}/{bl}"
-
-            yield f"data: {json.dumps({'type': 'combo_start', 'combo_idx': combo_idx, 'total_combos': len(combos), 'label': label, 'files_count': len(chosen_files)})}\n\n"
-
-            # Stage 1: Load Excel tables
-            yield f"data: {json.dumps({'type': 'stage', 'stage': 1, 'name': 'Ingesting Workbooks', 'detail': f'Parsing {len(chosen_files)} Excel file(s) for {label}...', 'progress': 20})}\n\n"
-            try:
-                tables = load_tables(input_dir, country, bl, selected_files=chosen_files)
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Successfully loaded {len(tables)} worksheets across {len(chosen_files)} files.'})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'combo_error', 'label': label, 'message': f'Ingestion failed: {e}'})}\n\n"
-                continue
-
-            # Stage 2: KRI filtering
-            yield f"data: {json.dumps({'type': 'stage', 'stage': 2, 'name': 'Evaluating KRI Triggers', 'detail': f'Evaluating KRI 1, 2, 3, 6 trigger rules across {len(tables)} tables...', 'progress': 40})}\n\n"
-            try:
-                kri_results = filter_kris(tables, qi)
-                ads = set(kri_results)
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Identified {len(ads)} alert definition model(s) with triggered KRIs.'})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'combo_error', 'label': label, 'message': f'KRI evaluation failed: {e}'})}\n\n"
-                continue
-
-            # Stage 3: KPI enrichment
-            yield f"data: {json.dumps({'type': 'stage', 'stage': 3, 'name': 'Correlating KPI Metrics', 'detail': f'Extracting time-series and relational KPIs for {len(ads)} model(s)...', 'progress': 60})}\n\n"
-            try:
-                kpi_data, kpi_avail = enrich_kpis(tables, ads, qi)
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Correlated primary and supporting KPI diagnostics (KPI 1..18).'})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'combo_error', 'label': label, 'message': f'KPI enrichment failed: {e}'})}\n\n"
-                continue
-
-            # Stage 4: Qualitative Scenario logic & Taxonomy
-            yield f"data: {json.dumps({'type': 'stage', 'stage': 4, 'name': 'Scenario & Taxonomy Synthesis', 'detail': f'Decoding segment taxonomy & qualitative scenario detection logic...', 'progress': 80})}\n\n"
-            yield f"data: {json.dumps({'type': 'log', 'message': 'Decoded segment composition, risk tiers, and linked qualitative FCRM detection logic.'})}\n\n"
-
-            # Stage 5: Output assembly
-            yield f"data: {json.dumps({'type': 'stage', 'stage': 5, 'name': 'Assembling Markdown Dossier', 'detail': f'Writing consolidated XML-tagged Markdown dossier...', 'progress': 95})}\n\n"
-            try:
-                out_file = build_output(kri_results, kpi_data, kpi_avail, qi, output_dir, country, bl, scenarios_file=scenarios_file)
-                res_item = {
-                    "label": label,
-                    "status": "ok",
-                    "triggered": len(ads),
-                    "files_count": len(chosen_files),
-                    "output_file": out_file.name,
-                    "output_path": str(out_file),
-                }
-                overall_results.append(res_item)
-                yield f"data: {json.dumps({'type': 'combo_complete', 'result': res_item, 'progress': 100})}\n\n"
-                yield f"data: {json.dumps({'type': 'log', 'message': f'Generated dossier: {out_file.name} ({len(ads)} model(s)).'})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'combo_error', 'label': label, 'message': f'Assembly failed: {e}'})}\n\n"
-
-        yield f"data: {json.dumps({'type': 'all_complete', 'results': overall_results, 'quarter': qi.ingestion, 'test': qi.test, 'base': qi.base})}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
 # ── HTML UI ─────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -281,7 +194,7 @@ HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>KRI/KPI Context Builder</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -291,8 +204,8 @@ HTML = r"""<!DOCTYPE html>
 }
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);
   min-height:100vh;display:flex;justify-content:center;padding:40px 20px}
-.app{max-width:860px;width:100%}
-h1{font-size:1.75rem;font-weight:700;margin-bottom:6px;
+.app{max-width:820px;width:100%}
+h1{font-size:1.7rem;font-weight:700;margin-bottom:6px;
   background:linear-gradient(135deg,#a5b4fc,#34d399);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .subtitle{color:var(--text2);font-size:.86rem;margin-bottom:28px}
@@ -336,31 +249,6 @@ input:focus{border-color:var(--accent)}
 .file-icon{opacity:0.6;font-size:0.9rem}
 
 input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
-
-/* ── Progress HUD & Animated Stepper ────────────────────────── */
-.progress-hud{margin-top:20px;padding:18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px}
-.stepper{display:flex;justify-content:space-between;position:relative;margin-bottom:22px;padding:0 8px}
-.stepper::before{content:'';position:absolute;top:18px;left:30px;right:30px;height:3px;background:var(--surface3);z-index:1}
-.stepper-progress-line{position:absolute;top:18px;left:30px;height:3px;background:linear-gradient(90deg,var(--accent),var(--green));z-index:2;transition:width .4s ease;width:0%}
-.step{display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;z-index:3}
-.step-circle{width:36px;height:36px;border-radius:50%;background:var(--surface3);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;color:var(--text2);transition:all .3s ease}
-.step.active .step-circle{background:var(--accent);border-color:var(--accent2);color:#fff;box-shadow:0 0 14px rgba(99,102,241,0.6);animation:pulse-ring 1.8s infinite}
-.step.complete .step-circle{background:var(--green);border-color:var(--green);color:#06281e}
-.step-label{font-size:.74rem;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px;transition:color .3s}
-.step.active .step-label{color:var(--accent2)}
-.step.complete .step-label{color:var(--green)}
-
-@keyframes pulse-ring{0%{box-shadow:0 0 0 0 rgba(99,102,241,0.6)}70%{box-shadow:0 0 0 10px rgba(99,102,241,0)}100%{box-shadow:0 0 0 0 rgba(99,102,241,0)}}
-
-.bar-container{width:100%;height:8px;background:var(--surface3);border-radius:4px;overflow:hidden;margin-bottom:14px}
-.bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .3s ease}
-.status-text{display:flex;justify-content:space-between;align-items:center;font-size:.84rem;color:var(--text);margin-bottom:12px}
-.status-title{font-weight:600;color:var(--accent2);display:flex;align-items:center;gap:6px}
-.status-pct{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--green)}
-
-.telemetry-console{background:#090c10;border:1px solid #1c2128;border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:.78rem;color:#7ee787;max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;box-shadow:inset 0 2px 8px rgba(0,0,0,0.5)}
-.telemetry-line{display:flex;gap:8px;line-height:1.4}
-.telemetry-time{color:var(--text2);user-select:none}
 
 .results{margin-top:16px}
 .result{padding:12px 16px;border-radius:8px;margin-bottom:8px;font-size:.88rem;
@@ -421,10 +309,9 @@ input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent);cursor:
   <!-- Run -->
   <div class="card">
     <h2>🚀 Execute Pipeline</h2>
-    <button id="runBtn" class="btn btn-run" onclick="runStream()" disabled>
+    <button id="runBtn" class="btn btn-run" onclick="run()" disabled>
       Select at least one file above to run
     </button>
-    <div id="progressArea"></div>
     <div id="resultArea"></div>
   </div>
 </div>
@@ -616,104 +503,19 @@ function updateRunBtn() {
     : 'Select at least one file above to run';
 }
 
-function renderProgressHUD(targetArea) {
-  targetArea.innerHTML = `
-    <div class="progress-hud">
-      <div class="stepper">
-        <div id="stepProgressLine" class="stepper-progress-line"></div>
-        <div class="step active" id="step1">
-          <div class="step-circle" id="circle1">1</div>
-          <span class="step-label">Ingestion</span>
-        </div>
-        <div class="step" id="step2">
-          <div class="step-circle" id="circle2">2</div>
-          <span class="step-label">KRIs</span>
-        </div>
-        <div class="step" id="step3">
-          <div class="step-circle" id="circle3">3</div>
-          <span class="step-label">KPIs</span>
-        </div>
-        <div class="step" id="step4">
-          <div class="step-circle" id="circle4">4</div>
-          <span class="step-label">Scenario</span>
-        </div>
-        <div class="step" id="step5">
-          <div class="step-circle" id="circle5">5</div>
-          <span class="step-label">Dossier</span>
-        </div>
-      </div>
-      <div class="status-text">
-        <span class="status-title" id="stageTitle">
-          <span class="spinner"></span> Initializing pipeline...
-        </span>
-        <span class="status-pct" id="stagePct">0%</span>
-      </div>
-      <div class="bar-container">
-        <div class="bar-fill" id="barFill"></div>
-      </div>
-      <div class="telemetry-console" id="telemetryConsole"></div>
-    </div>
-  `;
-}
-
-function updateStageHUD(stageNum, title, pct, detail) {
-  const line = document.getElementById('stepProgressLine');
-  const bar = document.getElementById('barFill');
-  const titleEl = document.getElementById('stageTitle');
-  const pctEl = document.getElementById('stagePct');
-
-  if (line) line.style.width = `${((stageNum - 1) / 4) * 100}%`;
-  if (bar) bar.style.width = `${pct}%`;
-  if (pctEl) pctEl.textContent = `${pct}%`;
-  if (titleEl) titleEl.innerHTML = `<span class="spinner"></span> <b>Step ${stageNum}:</b> ${title}`;
-
-  for (let i = 1; i <= 5; i++) {
-    const el = document.getElementById(`step${i}`);
-    const cEl = document.getElementById(`circle${i}`);
-    if (!el || !cEl) continue;
-    if (i < stageNum) {
-      el.className = 'step complete';
-      cEl.textContent = '✓';
-    } else if (i === stageNum) {
-      el.className = 'step active';
-      cEl.textContent = i;
-    } else {
-      el.className = 'step';
-      cEl.textContent = i;
-    }
-  }
-
-  if (detail) {
-    addTelemetryLog(detail);
-  }
-}
-
-function addTelemetryLog(msg) {
-  const c = document.getElementById('telemetryConsole');
-  if (!c) return;
-  const now = new Date().toTimeString().split(' ')[0];
-  const div = document.createElement('div');
-  div.className = 'telemetry-line';
-  div.innerHTML = `<span class="telemetry-time">[${now}]</span> <span>${msg}</span>`;
-  c.appendChild(div);
-  c.scrollTop = c.scrollHeight;
-}
-
-async function runStream() {
+async function run() {
   const btn = document.getElementById('runBtn');
-  const pArea = document.getElementById('progressArea');
-  const rArea = document.getElementById('resultArea');
+  const area = document.getElementById('resultArea');
   const combos = getSelectedPayload();
 
   if (!combos.length) return;
 
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Executing Live Pipeline...';
-  rArea.innerHTML = '';
-  renderProgressHUD(pArea);
+  btn.innerHTML = '<span class="spinner"></span> Processing pipeline...';
+  area.innerHTML = '<div class="empty"><span class="spinner"></span> Running pipeline for selected files...</div>';
 
   try {
-    const response = await fetch('/api/run/stream', {
+    const r = await fetch('/api/run', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -724,88 +526,44 @@ async function runStream() {
         combos
       })
     });
+    const d = await r.json();
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, {stream: true});
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep partial chunk
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const rawJson = line.replace('data: ', '').trim();
-        if (!rawJson) continue;
-
-        try {
-          const ev = JSON.parse(rawJson);
-          if (ev.type === 'stage') {
-            updateStageHUD(ev.stage, ev.name, ev.progress, ev.detail);
-          } else if (ev.type === 'log') {
-            addTelemetryLog(ev.message);
-          } else if (ev.type === 'combo_start') {
-            addTelemetryLog(`--- Processing Combo [${ev.combo_idx}/${ev.total_combos}]: <b>${ev.label}</b> (${ev.files_count} file(s)) ---`);
-          } else if (ev.type === 'all_complete') {
-            for (let i = 1; i <= 5; i++) {
-              const el = document.getElementById(`step${i}`);
-              const cEl = document.getElementById(`circle${i}`);
-              if (el && cEl) { el.className = 'step complete'; cEl.textContent = '✓'; }
-            }
-            const line = document.getElementById('stepProgressLine');
-            if (line) line.style.width = '100%';
-            const bar = document.getElementById('barFill');
-            if (bar) bar.style.width = '100%';
-            const titleEl = document.getElementById('stageTitle');
-            if (titleEl) titleEl.innerHTML = '✨ <b>Pipeline Complete</b>';
-            const pctEl = document.getElementById('stagePct');
-            if (pctEl) pctEl.textContent = '100%';
-
-            renderFinalResults(ev.results, ev.quarter, ev.test, ev.base, rArea);
-          } else if (ev.type === 'error') {
-            rArea.innerHTML = `<div class="empty" style="color:var(--red)">⚠ ${ev.message}</div>`;
-          }
-        } catch (parseErr) {
-          console.error("SSE parse error", parseErr, rawJson);
-        }
-      }
+    if (!r.ok || d.error) {
+      area.innerHTML = `<div class="empty" style="color:var(--red)">⚠ ${d.error || 'Execution failed'}</div>`;
+      updateRunBtn();
+      return;
     }
+
+    let outHtml = `
+      <div class="results">
+        <div style="color:var(--text2);font-size:.82rem;margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:6px">
+          <b>Quarters resolved:</b> Ingestion = <code>${d.quarter}</code> · Test = <code>${d.test}</code> · Base = <code>${d.base}</code>
+        </div>
+    `;
+
+    outHtml += d.results.map(res => `
+      <div class="result ${res.status}">
+        <div>
+          <b>${res.label}</b>
+          <span style="color:var(--text2);margin-left:8px;font-size:0.84rem">
+            ${res.status === 'ok' ? `(${res.triggered} alert definitions with triggered KRIs from ${res.files_count} file(s))` : `(${res.message})`}
+          </span>
+          ${res.status === 'ok' ? `
+            <div style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--accent2);margin-top:6px">
+              📄 Output: <b>${res.output_file}</b>
+            </div>` : ''}
+        </div>
+        <span class="badge ${res.status}">${res.status === 'ok' ? '✓ DONE' : '✗ FAILED'}</span>
+      </div>
+    `).join('');
+
+    outHtml += '</div>';
+    area.innerHTML = outHtml;
   } catch (err) {
-    rArea.innerHTML = `<div class="empty" style="color:var(--red)">Execution error: ${err.message}</div>`;
+    area.innerHTML = `<div class="empty" style="color:var(--red)">Execution error: ${err.message}</div>`;
   } finally {
     updateRunBtn();
   }
-}
-
-function renderFinalResults(results, quarter, test, base, area) {
-  let outHtml = `
-    <div class="results">
-      <div style="color:var(--text2);font-size:.82rem;margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:6px">
-        <b>Quarters resolved:</b> Ingestion = <code>${quarter}</code> · Test = <code>${test}</code> · Base = <code>${base}</code>
-      </div>
-  `;
-
-  outHtml += results.map(res => `
-    <div class="result ${res.status}">
-      <div>
-        <b>${res.label}</b>
-        <span style="color:var(--text2);margin-left:8px;font-size:0.84rem">
-          ${res.status === 'ok' ? `(${res.triggered} alert definitions with triggered KRIs from ${res.files_count} file(s))` : `(${res.message})`}
-        </span>
-        ${res.status === 'ok' ? `
-          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:var(--accent2);margin-top:6px">
-            📄 Output: <b>${res.output_file}</b>
-          </div>` : ''}
-      </div>
-      <span class="badge ${res.status}">${res.status === 'ok' ? '✓ DONE' : '✗ FAILED'}</span>
-    </div>
-  `).join('');
-
-  outHtml += '</div>';
-  area.innerHTML = outHtml;
 }
 </script>
 </body>

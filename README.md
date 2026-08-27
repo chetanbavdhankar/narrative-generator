@@ -165,10 +165,12 @@ For detailed mapping between KRIs, KPIs, and underlying ingestion table schemas,
 
 ---
 
-## 6. Recent Changes & Optimization Architecture
-- **Single-Pass Workbook Ingestion (5x–10x Speedup):** Replaced repetitive worksheet-by-worksheet openpyxl calls in `load_tables()` with a single-pass `sheet_name=None` workbook parse, drastically reducing ingestion and processing latency across large multi-sheet Excel files.
-- **Unified Diagnostic Extraction (`_get_kpi_diagnostic`):** Consolidated repetitive KPI lookup loops across tabular display and narrative story generation into a single canonical helper, reducing `core.py` by over 150 lines of duplicate boilerplate while maintaining 100% output fidelity.
-- **Full English Segment Decomposition:** Replaced all opaque numeric ranges (e.g. `Combined 01, 02, 03, 60`) with full English portfolio definitions and individual constituent sub-segment telemetry in `<domain name="identity">`.
-- **Integrated Causal Diagnostic Evaluation Units:** Restructured `serialize_dossier_markdown()` in `core.py` into `<domain name="triggered_kri_evaluations">`, where each unit pairs KRI trigger telemetry directly with its relevant KPIs and an integrated causal diagnostic story.
+## 6. Recent Changes & Paired Evaluation Architecture
+- **Why:** Presenting KRIs and KPIs in disconnected sections fragmented causal analysis; pairing each KRI directly with its relevant KPIs creates a complete, self-contained diagnostic story.
+- **How:** Restructured `serialize_dossier_markdown()` in `core.py` into `<domain name="triggered_kri_evaluations">`, where each Evaluation Unit contains:
+  1. **KRI Trigger Telemetry**: Test/Base volume counts, statistical deviation, 3-sigma flag, monthly progression, policy definition.
+  2. **Directly Paired KPI Metrics**: Primary & supporting KPIs with Test vs Baseline values, differences ($\Delta$), monthly trends, and relevance tags.
+  3. **Integrated Causal Diagnostic Story**: Plain-English narrative synthesizing the KRI trigger mechanics with the KPI evidence into one cohesive root cause.
+- **Impact:** LLM governance prompts receive clean, unified diagnostic context per trigger, preventing hallucinated or disconnected reasoning across multiple concurrent KRIs.
 
 

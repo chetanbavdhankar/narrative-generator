@@ -56,6 +56,7 @@ def format_quarter(val: Any) -> str | None:
     if s.isdigit() and len(s) == 5:
         return f"Q{s[4]}_{s[:4]}"
 
+    # Fallback: robust pd.to_datetime parsing for all standard ISO, EU, US date formats
     if re.match(r"^\d{4}[-_/]\d{1,2}(?:[-_/]\d{1,2})?$", s) or re.match(r"^\d{1,2}[-_/]\d{1,2}[-_/]\d{4}$", s):
         try:
             ts = pd.to_datetime(s, errors="coerce")
@@ -70,13 +71,9 @@ def format_quarter(val: Any) -> str | None:
 
 
 def resolve_quarter(q: str) -> QInfo:
-
-    std = format_quarter(q) or str(q).strip()
+    std = format_quarter(q) or q.strip()
     parts = std.split("_")
-    if len(parts) >= 2 and parts[0].upper().startswith("Q") and parts[0][1:].isdigit() and parts[1].isdigit():
-        qn, yr = int(parts[0][1:]), int(parts[1])
-    else:
-        qn, yr = 1, 2026
+    qn, yr = int(parts[0][1:]), int(parts[1])
 
     def _shift(qn, yr, off):
         t = yr * 4 + (qn - 1) + off
@@ -159,7 +156,20 @@ def normalize_business_line(bl_str: str) -> str:
 
 
 def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
-    """Extract (country, business_line) from anywhere within the filename."""
+    """Extract (country, business_line) from anywhere within the filename.
+
+    Naming convention: ...<COUNTRY>_<BUSINESS_LINE>...xlsx
+    Supported business line forms (case-insensitive):
+      RB: RB, Retail, Retail_Bank, Retail_Banking, RetailBank, RetailBanking
+      WB: WB, Wholesale, Wholesale_Bank, Wholesale_Banking, WholesaleBank, WholesaleBanking
+
+    Examples:
+      PL_RB_kri.xlsx                         -> ('PL', 'RB')
+      2026_Q1_PL_retail_banking_kpi.xlsx     -> ('PL', 'RB')
+      alert_data_RO_wholesale_bank.xlsx      -> ('RO', 'WB')
+      FR_retail_2026.xlsx                    -> ('FR', 'RB')
+      data_CH_WB.xlsx                        -> ('CH', 'WB')
+    """
     if filename.startswith("~$"):
         return None
 
@@ -215,17 +225,19 @@ def _norm_col(c):
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize and deduplicate column names, standardize quarter columns, and reset index."""
-    if df is None or df.empty or len(df.columns) == 0:
+    if df is None or df.empty:
         return pd.DataFrame()
     df.columns = [_norm_col(c) for c in df.columns]
+    # Remove duplicate columns (keeping first occurrence) to prevent DataFrame-valued column slicing
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
     # Standardize all quarter/period values to 'Q<N>_<YYYY>'
     for c in df.columns:
         c_lower = str(c).lower()
-        if "quarter" in c_lower or "benchmark" in c_lower:
+        if "quarter" in c_lower or "benchmark_period" in c_lower:
             df[c] = df[c].apply(format_quarter)
 
+    # Ensure fresh 0..N-1 RangeIndex to prevent axis reindexing errors
     return df.reset_index(drop=True)
 
 
@@ -235,10 +247,13 @@ def load_tables(
     bl: str,
     selected_files: list[str] | None = None
 ) -> dict[str, pd.DataFrame]:
-    """Fast-load all sheets from matching or explicitly selected Excel files in a single pass."""
+    """Load all sheets from matching or explicitly selected Excel files."""
     root = Path(str(input_dir).strip(' "\''))
-    files = [root / f if not Path(f).is_absolute() else Path(f) for f in selected_files] if selected_files else find_matching_files(root, country, bl)
-    files = [f for f in files if f.is_file()]
+    if selected_files:
+        files = [root / f if not Path(f).is_absolute() else Path(f) for f in selected_files]
+        files = [f for f in files if f.is_file()]
+    else:
+        files = find_matching_files(root, country, bl)
 
     if not files:
         raise FileNotFoundError(f"No valid files found for {country.upper()}/{bl.upper()} in {input_dir}")
@@ -246,26 +261,21 @@ def load_tables(
     print(f"\n[Load] {len(files)} file(s) for {country}/{bl}:")
     tables: dict[str, pd.DataFrame] = {}
     for f in files:
-        try:
-            # Read all sheets in a single pass (5x-10x faster than opening per sheet)
-            sheets_dict = pd.read_excel(f, sheet_name=None, engine="openpyxl")
-        except Exception as e:
-            print(f"  [Warning] Failed loading {f.name}: {e}")
-            continue
-
-        print(f"  -> {f.name}  ({', '.join(sheets_dict.keys())})")
-        for s, raw_df in sheets_dict.items():
+        xls = pd.ExcelFile(f, engine="openpyxl")
+        print(f"  -> {f.name}  ({', '.join(xls.sheet_names)})")
+        for s in xls.sheet_names:
+            raw_df = pd.read_excel(xls, sheet_name=s)
             cleaned_df = _clean_dataframe(raw_df)
-            if cleaned_df.empty:
-                continue
-            cleaned_df["_source_file"] = f.name
-            cleaned_df["_source_sheet"] = s
-            cleaned_df["_source_ref"] = f"{f.name}/{s}"
+            if not cleaned_df.empty:
+                cleaned_df["_source_file"] = f.name
+                cleaned_df["_source_sheet"] = s
+                cleaned_df["_source_ref"] = f"{f.name}/{s}"
             if s in tables:
-                tables[s] = pd.concat([tables[s], cleaned_df], ignore_index=True)
+                # Merge across files without index clashes
+                merged = pd.concat([tables[s], cleaned_df], ignore_index=True)
+                tables[s] = _clean_dataframe(merged)
             else:
                 tables[s] = cleaned_df
-
     print(f"[Load] {len(tables)} table(s) total.\n")
     return tables
 
@@ -277,52 +287,25 @@ def _s(val):
     if val is None:
         return None
     if isinstance(val, (pd.Series, pd.DataFrame)):
-        if len(val) == 0:
-            return None
-        try:
-            val = val.iloc[0]
-        except Exception:
-            return None
+        val = val.iloc[0] if len(val) > 0 else None
         if val is None:
             return None
-    try:
-        if pd.isna(val):
-            return None
-    except Exception:
-        pass
-    if hasattr(val, "item") and not isinstance(val, (str, bytes)):
-        try:
-            return val.item()
-        except Exception:
-            return val
-    return val
+    if pd.isna(val):
+        return None
+    return val.item() if hasattr(val, "item") else val
 
 
 def _is_one(val: Any) -> bool:
     """Robust check for boolean / binary trigger flags (1, 1.0, True, '1')."""
-    if val is None:
+    if val is None or pd.isna(val):
         return False
     if isinstance(val, (pd.Series, pd.DataFrame)):
-        if len(val) == 0:
+        val = val.iloc[0] if len(val) > 0 else None
+        if val is None or pd.isna(val):
             return False
-        try:
-            val = val.iloc[0]
-        except Exception:
-            return False
-        if val is None:
-            return False
-    try:
-        if pd.isna(val):
-            return False
-    except Exception:
-        pass
-    if hasattr(val, "item") and not isinstance(val, (str, bytes)):
-        try:
-            val = val.item()
-        except Exception:
-            pass
+    if hasattr(val, "item"):
+        val = val.item()
     return str(val).strip() in ("1", "1.0", "True", "true") or val == 1
-
 
 
 def _trend(row, months):
@@ -1220,103 +1203,7 @@ def _format_metric_row(metric: str, val: Any, source: str) -> str:
     return f"    | {_escape_md(metric)} | {_escape_md(val)} | {_escape_md(source)} |"
 
 
-def _get_kpi_diagnostic(
-
-
-    kpi_code: str,
-    rel_type: str,
-    kpi_context: dict[str, Any],
-    kpi_sources: dict[str, Any],
-    test_q_str: str,
-    base_q_str: str
-) -> tuple[str, str]:
-    """Resolve metric telemetry, format table row, and generate factual narrative story for a KPI."""
-    if kpi_code in ("KPI_17", "KPI_17_quarter"):
-        qm = kpi_context.get("kpi17_quarterly_metrics", {})
-        gen_ov, prod_ov = qm.get("general_overlap_ratio"), qm.get("productive_overlap_ratio")
-        src = kpi_sources.get("kpi17_quarterly_metrics", "KPI_17")
-        if gen_ov is not None or prod_ov is not None:
-            t_row = f"    | Sibling Typology Overlap ({kpi_code}) | General: {gen_ov or '—'} | Productive: {prod_ov or '—'} | — | — | {rel_type} | {src} |"
-            s_row = f"    - **{kpi_code} (Overlap Analysis):** Demonstrated a general overlap ratio of **{gen_ov or '—'}** and productive overlap ratio of **{prod_ov or '—'}** with sibling alert definitions within the same typology."
-        else:
-            t_row = f"    | Sibling Typology Overlap ({kpi_code}) | Independent Typology (No Sibling Overlap) | — | — | — | {rel_type} | {src} |"
-            s_row = f"    - **{kpi_code} (Overlap Analysis):** Operates as an independent detection control within its typology without significant sibling overlap."
-        return t_row, s_row
-
-    if kpi_code in ("KPI_18", "KPI_18_quarter"):
-        qt = kpi_context.get("kpi18_quarterly_thresholds", {})
-        min_amt, min_freq, dist = qt.get("min_amount_threshold"), qt.get("min_frequency_threshold"), qt.get("distance_amount_first_tp")
-        src = kpi_sources.get("kpi18_quarterly_thresholds", "KPI_18")
-        if min_amt is not None or min_freq is not None:
-            t_row = f"    | Configured Limits & Distances ({kpi_code}) | Min Amt: {min_amt or '—'} | Min Freq: {min_freq or '—'} (Dist: {dist or '—'}) | — | — | {rel_type} | {src} |"
-            s_row = f"    - **{kpi_code} (Thresholds & Distances):** Evaluated against configured thresholds: Min Amount = **{min_amt or '—'}**, Max Amount = **{qt.get('max_amount_threshold', '—')}**, Min Frequency = **{min_freq or '—'}** (Distance to 1st TP: {dist or '—'})."
-        else:
-            t_row = f"    | Configured Limits & Distances ({kpi_code}) | Standard Baseline Boundaries | — | — | — | {rel_type} | {src} |"
-            s_row = f"    - **{kpi_code} (Thresholds & Distances):** Evaluated against baseline parameter boundaries without secondary threshold proximity breaches."
-        return t_row, s_row
-
-    spec_kpi = KPI_SPECIFICATIONS.get(kpi_code, {})
-    title = spec_kpi.get("title", kpi_code)
-
-    k_map = {
-        "KPI_1": "kpi1_alert_count",
-        "KPI_2b": "kpi2b_alerted_customers",
-        "KPI_3": "kpi3_customer_count",
-        "KPI_6": "kpi6_value",
-        "KPI_11": "kpi11_value",
-        "KPI_12": "kpi12_value",
-        "KPI_15a": "kpi15a_value",
-        "KPI_15b": "kpi15b_value",
-        "KPI_16": "kpi16_unique_customers",
-    }
-    k_name = k_map.get(kpi_code)
-    val = kpi_context.get(k_name) if k_name else None
-    b_val = kpi_context.get(f"{k_name}_base") if k_name else None
-    d_val = kpi_context.get(f"{k_name}_diff") if k_name else None
-    m_trend = kpi_context.get(f"{k_name}_trend") if k_name else None
-    src = kpi_sources.get(k_name, kpi_code)
-
-    if val is not None:
-        diff_disp = f"{d_val:+}" if isinstance(d_val, (int, float)) else (str(d_val) if d_val is not None else "—")
-        trend_disp = " | ".join(f"{k}: {v}" for k, v in m_trend.items()) if m_trend else "—"
-        b_disp = str(b_val) if b_val is not None else "—"
-        t_row = f"    | {title} ({kpi_code}) | {val} | {b_disp} | {diff_disp} | {trend_disp} | {rel_type} | {src} |"
-    else:
-        t_row = f"    | {title} ({kpi_code}) | Not Populated / 0 Alerts | — | — | — | {rel_type} | {src} |"
-
-    cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
-
-    if kpi_code == "KPI_1":
-        story_text = f"Generated **{val} alerts** in {test_q_str}{cmp_str}, establishing the gross operational monitoring volume." if val is not None else f"Gross alert volume was unpopulated or zero in {test_q_str}."
-    elif kpi_code == "KPI_2b":
-        ratio = f" (yielding {round(kpi_context.get('kpi1_alert_count', val) / val, 2)} alerts/customer)" if isinstance(kpi_context.get('kpi1_alert_count'), (int, float)) and val and val > 0 else ""
-        story_text = f"Alerts in {test_q_str} were distributed across **{val} unique alerted customers**{cmp_str}{ratio}, providing insight into customer coverage breadth rather than repeat alert volume." if val is not None else f"Unique customer alert coverage was unpopulated or zero in {test_q_str}."
-    elif kpi_code == "KPI_3":
-        story_text = f"A total of **{val} distinct customers** generated alerts confirmed as productive and escalated to Level 3 investigation in {test_q_str}{cmp_str}." if val is not None else f"No unique customers triggered Level 3 productive escalations in {test_q_str}."
-    elif kpi_code == "KPI_6":
-        story_text = f"The earliest productive alert occurred at the **{val} percentile position** above the configured threshold floor in {test_q_str}{cmp_str}, evaluating threshold sensitivity." if val is not None else f"First productive alert percentile position was unpopulated in {test_q_str}."
-    elif kpi_code == "KPI_11":
-        story_text = f"A false positive ratio of **{val}%** was recorded in {test_q_str}{cmp_str}, reflecting operational investigator filtering efficiency." if val is not None else f"False positive closure ratio was unpopulated in {test_q_str}."
-    elif kpi_code == "KPI_12":
-        story_text = f"Achieved a True Positive conversion efficiency rate of **{val}%** in {test_q_str}{cmp_str}." if val is not None else f"True positive conversion efficiency rate was unpopulated in {test_q_str}."
-    elif kpi_code == "KPI_15a":
-        story_text = f"**{val}% of productive alerts** clustered within the configured Amount threshold proximity window in {test_q_str}{cmp_str}." if val is not None else f"Amount threshold proximity accumulation ratio was unpopulated in {test_q_str}."
-    elif kpi_code == "KPI_15b":
-        story_text = f"**{val}% of productive alerts** clustered within the configured Frequency threshold proximity window in {test_q_str}{cmp_str}." if val is not None else f"Frequency threshold proximity accumulation ratio was unpopulated in {test_q_str}."
-    elif kpi_code == "KPI_16":
-        story_text = f"Generated **{val} productive (Level 3 escalated) alerts** in {test_q_str}{cmp_str}." if val is not None else f"Zero productive alerts were generated in {test_q_str}."
-    else:
-        story_text = spec_kpi.get("description", "")
-
-    if m_trend:
-        story_text += f" Monthly trajectory: {', '.join(f'{mk}: {mv}' for mk, mv in m_trend.items())}."
-    s_row = f"    - **{kpi_code} ({title}):** {story_text}"
-
-    return t_row, s_row
-
-
 def serialize_dossier_markdown(
-
     ad_block: dict[str, Any],
     scenarios_catalog: dict[str, Any] | None = None,
     scenario_source: str = "scenarios.json"
@@ -1350,6 +1237,13 @@ def serialize_dossier_markdown(
         parts.append(_format_metric_row("Line of Business", decoded["line_of_business"], "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Customer Risk Tier", f"{decoded['risk_name']} [Code: {decoded['risk_code']}]", "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Monitoring Evaluation Window", f"{decoded['period_alias']} ({decoded['period_description']}) [Code: {decoded['period_code']}]", "AD_Taxonomy_Standard"))
+
+        if decoded.get("is_combined") and decoded.get("members_detail"):
+            parts.append(_format_metric_row("Segment Composition Type", f"Combined Segment ({len(decoded['members_detail'])} Member Sub-Segments)", "AD_Taxonomy_Standard"))
+            for m in decoded["members_detail"]:
+                parts.append(_format_metric_row(f"Included Sub-Segment [{m['code']}]", f"{m['name']} (CTC: {m['ctc']}, LOB: {m['lob']})", "AD_Taxonomy_Standard"))
+        else:
+            parts.append(_format_metric_row("Customer Type Code (CTC)", decoded["customer_type_code"], "AD_Taxonomy_Standard"))
 
 
     id_labels = [
@@ -1389,15 +1283,8 @@ def serialize_dossier_markdown(
     # 4. Triggered KRI & Paired KPI Diagnostic Evaluation Units
     if triggered_kris:
         test_q_str = str(quarters.get("test") or "Evaluation Quarter")
-        base_quarters_list = quarters.get("base_quarters")
-        if quarters.get("base"):
-            base_q_str = str(quarters["base"])
-        elif isinstance(base_quarters_list, list) and len(base_quarters_list) > 0:
-            base_q_str = str(base_quarters_list[0])
-        else:
-            base_q_str = "Baseline"
+        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
         parts.append('  <domain name="triggered_kri_evaluations">')
-
 
         for idx, ev in enumerate(triggered_kris, 1):
             kri_key = ev.get("kri", "KRI")
@@ -1474,20 +1361,173 @@ def serialize_dossier_markdown(
                     seen_kpis.add(clean_sk)
 
 
-            unit_stories: list[str] = []
             for kpi_code, rel_type in all_unit_kpis:
-                t_row, s_row = _get_kpi_diagnostic(kpi_code, rel_type, kpi_context, kpi_sources, test_q_str, base_q_str)
-                parts.append(t_row)
-                unit_stories.append(s_row)
+                if kpi_code in ("KPI_17", "KPI_17_quarter"):
+                    qm = kpi_context.get("kpi17_quarterly_metrics", {})
+                    gen_ov = qm.get("general_overlap_ratio")
+                    prod_ov = qm.get("productive_overlap_ratio")
+                    if gen_ov is not None or prod_ov is not None:
+                        val_disp = f"General: {gen_ov or '—'} | Productive: {prod_ov or '—'}"
+                    else:
+                        val_disp = "Independent Typology (No Sibling Overlap)"
+                    parts.append(f"    | Sibling Typology Overlap ({kpi_code}) | {val_disp} | — | — | — | {rel_type} | {kpi_sources.get('kpi17_quarterly_metrics', 'KPI_17')} |")
+                elif kpi_code in ("KPI_18", "KPI_18_quarter"):
+                    qt = kpi_context.get("kpi18_quarterly_thresholds", {})
+                    min_amt = qt.get("min_amount_threshold")
+                    min_freq = qt.get("min_frequency_threshold")
+                    dist = qt.get("distance_amount_first_tp")
+                    if min_amt is not None or min_freq is not None:
+                        val_disp = f"Min Amt: {min_amt or '—'} | Min Freq: {min_freq or '—'} (Dist: {dist or '—'})"
+                    else:
+                        val_disp = "Standard Baseline Boundaries"
+                    parts.append(f"    | Configured Limits & Distances ({kpi_code}) | {val_disp} | — | — | — | {rel_type} | {kpi_sources.get('kpi18_quarterly_thresholds', 'KPI_18')} |")
+                else:
+                    spec_kpi = KPI_SPECIFICATIONS.get(kpi_code, {})
+                    title = spec_kpi.get("title", kpi_code)
+                    val_test = None
+                    val_base = None
+                    val_diff = None
+                    m_trend = None
+                    src_kpi = kpi_sources.get(kpi_code, kpi_code)
+                    for k_name, s_name in [
+                        ("kpi1_alert_count", "KPI_1"),
+                        ("kpi2b_alerted_customers", "KPI_2b"),
+                        ("kpi2b_productive_alert_rate", "KPI_2b"),
+                        ("kpi3_customer_count", "KPI_3"),
+                        ("kpi6_value", "KPI_6"),
+                        ("kpi11_value", "KPI_11"),
+                        ("kpi12_value", "KPI_12"),
+                        ("kpi15a_value", "KPI_15a"),
+                        ("kpi15b_value", "KPI_15b"),
+                        ("kpi16_unique_customers", "KPI_16"),
+                    ]:
+                        if s_name == kpi_code and k_name in kpi_context:
+                            val_test = kpi_context[k_name]
+                            val_base = kpi_context.get(f"{k_name}_base")
+                            val_diff = kpi_context.get(f"{k_name}_diff")
+                            m_trend = kpi_context.get(f"{k_name}_trend")
+                            src_kpi = kpi_sources.get(k_name, kpi_code)
+                            break
+                    if val_test is not None:
+                        diff_disp = f"{val_diff:+}" if isinstance(val_diff, (int, float)) else (str(val_diff) if val_diff is not None else "—")
+                        trend_disp = " | ".join(f"{k}: {v}" for k, v in m_trend.items()) if m_trend else "—"
+                        b_disp = str(val_base) if val_base is not None else "—"
+                        parts.append(f"    | {title} ({kpi_code}) | {val_test} | {b_disp} | {diff_disp} | {trend_disp} | {rel_type} | {src_kpi} |")
+                    else:
+                        parts.append(f"    | {title} ({kpi_code}) | Not Populated / 0 Alerts | — | — | — | {rel_type} | {src_kpi} |")
 
             # 3. Integrated Causal Diagnostic Story for this KRI
             parts.append(f"\n    #### 3. Integrated Causal Diagnostic Story for {kri_key}")
+            unit_stories = []
+            for kpi_code, _ in all_unit_kpis:
+                if kpi_code in ("KPI_17", "KPI_17_quarter"):
+                    qm = kpi_context.get("kpi17_quarterly_metrics", {})
+                    gen_ov = qm.get("general_overlap_ratio")
+                    prod_ov = qm.get("productive_overlap_ratio")
+                    if gen_ov is not None or prod_ov is not None:
+                        unit_stories.append(f"    - **{kpi_code} (Overlap Analysis):** Demonstrated a general overlap ratio of **{gen_ov or '—'}** and productive overlap ratio of **{prod_ov or '—'}** with sibling alert definitions within the same typology.")
+                    else:
+                        unit_stories.append(f"    - **{kpi_code} (Overlap Analysis):** Operates as an independent detection control within its typology without significant sibling overlap.")
+                elif kpi_code in ("KPI_18", "KPI_18_quarter"):
+                    qt = kpi_context.get("kpi18_quarterly_thresholds", {})
+                    min_amt = qt.get("min_amount_threshold")
+                    min_freq = qt.get("min_frequency_threshold")
+                    dist = qt.get("distance_amount_first_tp")
+                    if min_amt is not None or min_freq is not None:
+                        unit_stories.append(f"    - **{kpi_code} (Thresholds & Distances):** Evaluated against configured thresholds: Min Amount = **{min_amt or '—'}**, Max Amount = **{qt.get('max_amount_threshold', '—')}**, Min Frequency = **{min_freq or '—'}** (Distance to 1st TP: {dist or '—'}).")
+                    else:
+                        unit_stories.append(f"    - **{kpi_code} (Thresholds & Distances):** Evaluated against baseline parameter boundaries without secondary threshold proximity breaches.")
+                elif kpi_code in KPI_SPECIFICATIONS:
+                    spec_kpi = KPI_SPECIFICATIONS[kpi_code]
+                    val = None
+                    b_val = None
+                    d_val = None
+                    m_trend = None
+                    for k_name, s_name in [
+                        ("kpi1_alert_count", "KPI_1"),
+                        ("kpi2b_alerted_customers", "KPI_2b"),
+                        ("kpi2b_productive_alert_rate", "KPI_2b"),
+                        ("kpi3_customer_count", "KPI_3"),
+                        ("kpi6_value", "KPI_6"),
+                        ("kpi11_value", "KPI_11"),
+                        ("kpi12_value", "KPI_12"),
+                        ("kpi15a_value", "KPI_15a"),
+                        ("kpi15b_value", "KPI_15b"),
+                        ("kpi16_unique_customers", "KPI_16"),
+                    ]:
+                        if s_name == kpi_code and k_name in kpi_context:
+                            val = kpi_context[k_name]
+                            b_val = kpi_context.get(f"{k_name}_base")
+                            d_val = kpi_context.get(f"{k_name}_diff")
+                            m_trend = kpi_context.get(f"{k_name}_trend")
+                            break
+
+                    if kpi_code == "KPI_1":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"Generated **{val} alerts** in {test_q_str}{cmp_str}, establishing the gross operational monitoring volume."
+                        else:
+                            story_text = f"Gross alert volume was unpopulated or zero in {test_q_str}."
+                    elif kpi_code == "KPI_2b":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            ratio_str = f" (yielding {round(kpi_context.get('kpi1_alert_count', val) / val, 2)} alerts/customer)" if isinstance(kpi_context.get('kpi1_alert_count'), (int, float)) and val > 0 else ""
+                            story_text = f"Alerts in {test_q_str} were distributed across **{val} unique alerted customers**{cmp_str}{ratio_str}, providing insight into customer coverage breadth rather than repeat alert volume."
+                        else:
+                            story_text = f"Unique customer alert coverage was unpopulated or zero in {test_q_str}."
+                    elif kpi_code == "KPI_3":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"A total of **{val} distinct customers** generated alerts confirmed as productive and escalated to Level 3 investigation in {test_q_str}{cmp_str}."
+                        else:
+                            story_text = f"No unique customers triggered Level 3 productive escalations in {test_q_str}."
+                    elif kpi_code == "KPI_6":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"The earliest productive alert occurred at the **{val} percentile position** above the configured threshold floor in {test_q_str}{cmp_str}, evaluating threshold sensitivity."
+                        else:
+                            story_text = f"First productive alert percentile position was unpopulated in {test_q_str}."
+                    elif kpi_code == "KPI_11":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"A false positive ratio of **{val}%** was recorded in {test_q_str}{cmp_str}, reflecting operational investigator filtering efficiency."
+                        else:
+                            story_text = f"False positive closure ratio was unpopulated in {test_q_str}."
+                    elif kpi_code == "KPI_12":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"Achieved a True Positive conversion efficiency rate of **{val}%** in {test_q_str}{cmp_str}."
+                        else:
+                            story_text = f"True positive conversion efficiency rate was unpopulated in {test_q_str}."
+                    elif kpi_code == "KPI_15a":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"**{val}% of productive alerts** clustered within the configured Amount threshold proximity window in {test_q_str}{cmp_str}."
+                        else:
+                            story_text = f"Amount threshold proximity accumulation ratio was unpopulated in {test_q_str}."
+                    elif kpi_code == "KPI_15b":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"**{val}% of productive alerts** clustered within the configured Frequency threshold proximity window in {test_q_str}{cmp_str}."
+                        else:
+                            story_text = f"Frequency threshold proximity accumulation ratio was unpopulated in {test_q_str}."
+                    elif kpi_code == "KPI_16":
+                        if val is not None:
+                            cmp_str = f" (compared to {b_val} in {base_q_str}, Δ = {d_val:+})" if b_val is not None and isinstance(d_val, (int, float)) else ""
+                            story_text = f"Generated **{val} productive (Level 3 escalated) alerts** in {test_q_str}{cmp_str}."
+                        else:
+                            story_text = f"Zero productive alerts were generated in {test_q_str}."
+                    else:
+                        story_text = f"{spec_kpi['description']}"
+
+                    if m_trend:
+                        story_text += f" Monthly trajectory: {', '.join(f'{mk}: {mv}' for mk, mv in m_trend.items())}."
+                    unit_stories.append(f"    - **{kpi_code} ({spec_kpi['title']}):** {story_text}")
+
             if unit_stories:
                 parts.append("\n".join(unit_stories))
 
         parts.append("  </domain>\n")
-
-
 
 
     # 5. Thresholds Domain
@@ -1518,16 +1558,9 @@ def serialize_dossier_markdown(
     # 7. Portfolio KPI Baseline Domain (Complete Multi-Quarter Telemetry)
     if kpi_context:
         test_q_str = str(quarters.get("test") or "Evaluation Quarter")
-        base_quarters_list = quarters.get("base_quarters")
-        if quarters.get("base"):
-            base_q_str = str(quarters["base"])
-        elif isinstance(base_quarters_list, list) and len(base_quarters_list) > 0:
-            base_q_str = str(base_quarters_list[0])
-        else:
-            base_q_str = "Baseline"
+        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
         parts.append('  <domain name="portfolio_kpi_baseline">')
         parts.append(f"    | Metric | Evaluation ({test_q_str}) | Baseline ({base_q_str}) | Diff (Δ) | Monthly Trend | Source |")
-
         parts.append("    |---|---|---|---|---|---|")
         kpi_labels = [
             ("kpi1_alert_count", "Alert Count (KPI_1)", "KPI_1"),
