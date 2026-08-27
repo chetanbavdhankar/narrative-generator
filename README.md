@@ -166,3 +166,6 @@ The LLM selects exactly one of the 4 standard governance actions:
 2. `[ACTION: RECALIBRATE / TIGHTEN THRESHOLD]` (Volume surge with low/decaying true positive conversion).
 3. `[ACTION: RE-BAND / ADJUST PROXIMITY BOUNDARY]` (Productive alerts clustering near threshold limits).
 4. `[ACTION: DECOMMISSION / CONSOLIDATE]` (Prolonged dormancy across $\ge 3$ quarters unless serving as critical TF/Sanctions safety net).
+
+For detailed mapping between KRIs, KPIs, and underlying ingestion table schemas, see [`kri_kpi_mapping.md`](kri_kpi_mapping.md).
+
