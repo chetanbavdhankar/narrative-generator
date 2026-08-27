@@ -774,36 +774,67 @@ def enrich_kpis(tables, triggered_ads, qi):
 
 # ── Alert Definition Taxonomy Standards (ABCD.123.SS.RR.XY) ─────────────────
 
-SEGMENT_MAPPING: dict[str, dict[str, str]] = {
-    "01": {"ctc": "FI", "name": "Financial Institution", "lob": "Wholesale (WB)"},
-    "02": {"ctc": "LARGE", "name": "Large Corporation", "lob": "Wholesale (WB)"},
-    "03": {"ctc": "SMALL / OTHER", "name": "Small Corporation / Other Wholesale Banking Entity", "lob": "Wholesale (WB)"},
-    "04": {"ctc": "MIDCORP", "name": "Medium Corporation", "lob": "Retail (RB)"},
-    "05": {"ctc": "SME", "name": "Small-Medium Entity", "lob": "Retail (RB)"},
-    "06": {"ctc": "PRIVATE", "name": "Private Individual", "lob": "Retail (RB)"},
-    "07": {"ctc": "PRIBA", "name": "Private Banking", "lob": "Retail (RB)"},
-    "08": {"ctc": "FI, LARGE, WBCORP, SMALL, OTHER, MEDIUM", "name": "Wholesale Banking Customer (Combined 01, 02, 03, 60)", "lob": "Wholesale (WB)"},
-    "09": {"ctc": "MIDCORP, SME, CI (XL-XS), NCI (XL-XS)", "name": "Retail - Entity (Combined 04, 05, 13-22)", "lob": "Retail (RB)"},
-    "10": {"ctc": "PRIVATE, PRIBA, IND (LT-VHT)", "name": "Retail - Individual (Combined 06, 07, 24-27)", "lob": "Retail (RB)"},
-    "11": {"ctc": "All Retail Entities & Individuals", "name": "Retail Banking Customer (Combined 04-07, 13-22, 24-27)", "lob": "Retail (RB)"},
-    "12": {"ctc": "All WB & RB Entities & Individuals", "name": "Universal Banking Customer (Combined 01-07, 13-22, 24-27, 60)", "lob": "Universal (UB = WB + RB)"},
-    "13": {"ctc": "CI-XL", "name": "Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
-    "14": {"ctc": "CI-L", "name": "Cash Intensive Entity - Large", "lob": "Retail (RB)"},
-    "15": {"ctc": "CI-M", "name": "Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
-    "16": {"ctc": "CI-S", "name": "Cash Intensive Entity - Small", "lob": "Retail (RB)"},
-    "17": {"ctc": "CI-XS", "name": "Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
-    "18": {"ctc": "NCI-XL", "name": "Non-Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
-    "19": {"ctc": "NCI-L", "name": "Non-Cash Intensive Entity - Large", "lob": "Retail (RB)"},
-    "20": {"ctc": "NCI-M", "name": "Non-Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
-    "21": {"ctc": "NCI-S", "name": "Non-Cash Intensive Entity - Small", "lob": "Retail (RB)"},
-    "22": {"ctc": "NCI-XS", "name": "Non-Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
-    "23": {"ctc": "CI (XL-XS), NCI (XL-XS)", "name": "Cash and Non-Cash Intensive Entities (Combined 13-22)", "lob": "Retail (RB)"},
-    "24": {"ctc": "INDLT", "name": "Individual - Low Turnover", "lob": "Retail (RB)"},
-    "25": {"ctc": "INDMT", "name": "Individual - Medium Turnover", "lob": "Retail (RB)"},
-    "26": {"ctc": "INDHT", "name": "Individual - High Turnover", "lob": "Retail (RB)"},
-    "27": {"ctc": "INDVHT", "name": "Individual - Very High Turnover", "lob": "Retail (RB)"},
-    "60": {"ctc": "MEDIUM", "name": "Medium Corporation", "lob": "Wholesale (WB)"},
+SEGMENT_MAPPING: dict[str, dict[str, Any]] = {
+    "01": {"ctc": "FI (Financial Institution)", "name": "Financial Institution", "lob": "Wholesale (WB)"},
+    "02": {"ctc": "LARGE (Large Corporation)", "name": "Large Corporation", "lob": "Wholesale (WB)"},
+    "03": {"ctc": "SMALL / OTHER (Small Corporation / Other Wholesale Banking Entity)", "name": "Small Corporation / Other Wholesale Banking Entity", "lob": "Wholesale (WB)"},
+    "04": {"ctc": "MIDCORP (Medium Corporation)", "name": "Medium Corporation", "lob": "Retail (RB)"},
+    "05": {"ctc": "SME (Small-Medium Entity)", "name": "Small-Medium Entity", "lob": "Retail (RB)"},
+    "06": {"ctc": "PRIVATE (Private Individual)", "name": "Private Individual", "lob": "Retail (RB)"},
+    "07": {"ctc": "PRIBA (Private Banking)", "name": "Private Banking", "lob": "Retail (RB)"},
+    "08": {
+        "ctc": "Financial Institution (FI), Large Corporation (LARGE), Small Corporation / Other (SMALL/OTHER), Medium Corporation (MEDIUM)",
+        "name": "Wholesale Banking Portfolio (Financial Institutions, Large Corporations, Small/Other WB Entities, and Medium Corporations)",
+        "lob": "Wholesale (WB)",
+        "members": ["01", "02", "03", "60"],
+    },
+    "09": {
+        "ctc": "Medium Corporation (MIDCORP), Small-Medium Entity (SME), Cash Intensive Entities Extra Large to Extra Small (CI-XL, CI-L, CI-M, CI-S, CI-XS), Non-Cash Intensive Entities Extra Large to Extra Small (NCI-XL, NCI-L, NCI-M, NCI-S, NCI-XS)",
+        "name": "Retail Entity Portfolio (Medium Corporations, Small-Medium Entities, Cash Intensive Entities [XL-XS], and Non-Cash Intensive Entities [XL-XS])",
+        "lob": "Retail (RB)",
+        "members": ["04", "05", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"],
+    },
+    "10": {
+        "ctc": "Private Individual (PRIVATE), Private Banking (PRIBA), Individual Low Turnover (INDLT), Individual Medium Turnover (INDMT), Individual High Turnover (INDHT), Individual Very High Turnover (INDVHT)",
+        "name": "Retail Individual Portfolio (Private Individuals, Private Banking, and Individuals across Low, Medium, High, and Very High Turnover Bands)",
+        "lob": "Retail (RB)",
+        "members": ["06", "07", "24", "25", "26", "27"],
+    },
+    "11": {
+        "ctc": "All Retail Entities (MIDCORP, SME, CI XL-XS, NCI XL-XS) and Retail Individuals (PRIVATE, PRIBA, IND LT-VHT)",
+        "name": "Full Retail Banking Customer Portfolio (All Retail Corporate Entities and All Retail Private Individuals)",
+        "lob": "Retail (RB)",
+        "members": ["04", "05", "06", "07", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "24", "25", "26", "27"],
+    },
+    "12": {
+        "ctc": "All Wholesale Entities (FI, LARGE, MEDIUM, SMALL/OTHER) and All Retail Entities & Individuals (MIDCORP, SME, CI, NCI, PRIVATE, PRIBA, IND)",
+        "name": "Universal Banking Customer Portfolio (All Wholesale Corporate Entities, Retail Entities, and Retail Individuals)",
+        "lob": "Universal (UB = WB + RB)",
+        "members": ["01", "02", "03", "04", "05", "06", "07", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "24", "25", "26", "27", "60"],
+    },
+    "13": {"ctc": "CI-XL (Cash Intensive Entity - Extra Large)", "name": "Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "14": {"ctc": "CI-L (Cash Intensive Entity - Large)", "name": "Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "15": {"ctc": "CI-M (Cash Intensive Entity - Medium)", "name": "Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "16": {"ctc": "CI-S (Cash Intensive Entity - Small)", "name": "Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "17": {"ctc": "CI-XS (Cash Intensive Entity - Extra Small)", "name": "Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "18": {"ctc": "NCI-XL (Non-Cash Intensive Entity - Extra Large)", "name": "Non-Cash Intensive Entity - Extra Large", "lob": "Retail (RB)"},
+    "19": {"ctc": "NCI-L (Non-Cash Intensive Entity - Large)", "name": "Non-Cash Intensive Entity - Large", "lob": "Retail (RB)"},
+    "20": {"ctc": "NCI-M (Non-Cash Intensive Entity - Medium)", "name": "Non-Cash Intensive Entity - Medium", "lob": "Retail (RB)"},
+    "21": {"ctc": "NCI-S (Non-Cash Intensive Entity - Small)", "name": "Non-Cash Intensive Entity - Small", "lob": "Retail (RB)"},
+    "22": {"ctc": "NCI-XS (Non-Cash Intensive Entity - Extra Small)", "name": "Non-Cash Intensive Entity - Extra Small", "lob": "Retail (RB)"},
+    "23": {
+        "ctc": "Cash Intensive Entities (CI-XL, CI-L, CI-M, CI-S, CI-XS), Non-Cash Intensive Entities (NCI-XL, NCI-L, NCI-M, NCI-S, NCI-XS)",
+        "name": "Cash Intensive and Non-Cash Intensive Entities Portfolio (All Turnover Bands from Extra Large to Extra Small)",
+        "lob": "Retail (RB)",
+        "members": ["13", "14", "15", "16", "17", "18", "19", "20", "21", "22"],
+    },
+    "24": {"ctc": "INDLT (Individual - Low Turnover)", "name": "Individual - Low Turnover", "lob": "Retail (RB)"},
+    "25": {"ctc": "INDMT (Individual - Medium Turnover)", "name": "Individual - Medium Turnover", "lob": "Retail (RB)"},
+    "26": {"ctc": "INDHT (Individual - High Turnover)", "name": "Individual - High Turnover", "lob": "Retail (RB)"},
+    "27": {"ctc": "INDVHT (Individual - Very High Turnover)", "name": "Individual - Very High Turnover", "lob": "Retail (RB)"},
+    "60": {"ctc": "MEDIUM (Medium Corporation)", "name": "Medium Corporation", "lob": "Wholesale (WB)"},
 }
+
 
 RISK_MAPPING: dict[str, str] = {
     "00": "All Risks (Combined 01 High, 02 Medium, 03 Low)",
@@ -844,18 +875,32 @@ def decode_alert_definition(ad: str) -> dict[str, Any] | None:
     risk_info = RISK_MAPPING.get(risk_code, f"Risk Code {risk_code}")
     period_info = PERIOD_MAPPING.get(period_code, {"alias": period_code, "description": period_code})
 
+    members_detail = []
+    if seg_info.get("members"):
+        for m_code in seg_info["members"]:
+            m_info = SEGMENT_MAPPING.get(m_code, {})
+            members_detail.append({
+                "code": m_code,
+                "name": m_info.get("name", f"Segment {m_code}"),
+                "ctc": m_info.get("ctc", "—"),
+                "lob": m_info.get("lob", "—"),
+            })
+
     return {
         "scenario_code": scenario,
         "segment_code": seg_code,
         "segment_name": seg_info.get("name", f"Segment {seg_code}"),
         "customer_type_code": seg_info.get("ctc", "—"),
         "line_of_business": seg_info.get("lob", "—"),
+        "is_combined": bool(members_detail),
+        "members_detail": members_detail,
         "risk_code": risk_code,
         "risk_name": risk_info,
         "period_code": period_code,
         "period_alias": period_info.get("alias", period_code),
         "period_description": period_info.get("description", period_code),
     }
+
 
 
 # ── KRI Reference Definitions ───────────────────────────────────────────────
@@ -1188,10 +1233,18 @@ def serialize_dossier_markdown(
     decoded = decode_alert_definition(ad)
     if decoded:
         parts.append(_format_metric_row("Control Scenario Code", decoded["scenario_code"], "AD_Taxonomy_Standard"))
-        parts.append(_format_metric_row("Target Segment", f"{decoded['segment_name']} (CTC: {decoded['customer_type_code']}) [Code: {decoded['segment_code']}]", "AD_Taxonomy_Standard"))
+        parts.append(_format_metric_row("Target Segment", f"{decoded['segment_name']} [Code: {decoded['segment_code']}]", "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Line of Business", decoded["line_of_business"], "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Customer Risk Tier", f"{decoded['risk_name']} [Code: {decoded['risk_code']}]", "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Monitoring Evaluation Window", f"{decoded['period_alias']} ({decoded['period_description']}) [Code: {decoded['period_code']}]", "AD_Taxonomy_Standard"))
+
+        if decoded.get("is_combined") and decoded.get("members_detail"):
+            parts.append(_format_metric_row("Segment Composition Type", f"Combined Segment ({len(decoded['members_detail'])} Member Sub-Segments)", "AD_Taxonomy_Standard"))
+            for m in decoded["members_detail"]:
+                parts.append(_format_metric_row(f"Included Sub-Segment [{m['code']}]", f"{m['name']} (CTC: {m['ctc']}, LOB: {m['lob']})", "AD_Taxonomy_Standard"))
+        else:
+            parts.append(_format_metric_row("Customer Type Code (CTC)", decoded["customer_type_code"], "AD_Taxonomy_Standard"))
+
 
     id_labels = [
         ("country", "Country"),
