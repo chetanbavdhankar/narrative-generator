@@ -1518,9 +1518,16 @@ def serialize_dossier_markdown(
     # 7. Portfolio KPI Baseline Domain (Complete Multi-Quarter Telemetry)
     if kpi_context:
         test_q_str = str(quarters.get("test") or "Evaluation Quarter")
-        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
+        base_quarters_list = quarters.get("base_quarters")
+        if quarters.get("base"):
+            base_q_str = str(quarters["base"])
+        elif isinstance(base_quarters_list, list) and len(base_quarters_list) > 0:
+            base_q_str = str(base_quarters_list[0])
+        else:
+            base_q_str = "Baseline"
         parts.append('  <domain name="portfolio_kpi_baseline">')
         parts.append(f"    | Metric | Evaluation ({test_q_str}) | Baseline ({base_q_str}) | Diff (Δ) | Monthly Trend | Source |")
+
         parts.append("    |---|---|---|---|---|---|")
         kpi_labels = [
             ("kpi1_alert_count", "Alert Count (KPI_1)", "KPI_1"),
