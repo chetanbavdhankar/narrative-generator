@@ -103,7 +103,15 @@ _RENAMES = {
     "active_benchmark_period": "benchmark_quarter",
     "benchmark_period": "benchmark_quarter",
     "benchmark_date": "benchmark_quarter",
+    "alert_definition_id": "alert_definition",
+    "alert_definition_name": "alert_definition",
+    "alert_def": "alert_definition",
+    "alert_definition_code": "alert_definition",
+    "ad_id": "alert_definition",
+    "ad_name": "alert_definition",
+    "ad": "alert_definition",
 }
+
 
 
 def _period_to_qnum(val: Any) -> int | None:
@@ -205,10 +213,12 @@ def _norm_col(c):
     m = _DATE_RE.match(s)
     if m:
         return f"m_{m.group(1)}_{m.group(2)}"
-    if _QCOL_RE.match(s):
-        return f"q_{format_quarter(s)}"
+    fmt_q = format_quarter(s)
+    if fmt_q:
+        return f"q_{fmt_q}"
     cleaned = s.lower().replace(" ", "_").replace("-", "_")
     return _RENAMES.get(cleaned, _RENAMES.get(s.lower(), _RENAMES.get(s, s)))
+
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -559,18 +569,40 @@ _STRUCT_KPIS = {
 }
 
 
+def _find_sheet(tables: dict[str, pd.DataFrame], target: str) -> str | None:
+    """Find matching sheet name in tables handling casing and whitespace/underscore variations."""
+    if target in tables:
+        return target
+    target_clean = re.sub(r"[\s_-]+", "", target).upper()
+    for s in tables:
+        if re.sub(r"[\s_-]+", "", str(s)).upper() == target_clean:
+            return s
+    return None
+
+
 def _find_q_col(df: pd.DataFrame, q_str: str | None) -> str | None:
     """Resolve dynamic quarter column name matching standard 'Q{N}_{YYYY}' (e.g. 'Q3_2025', 'Q1_2026')."""
     if not q_str:
         return None
-    t_std = format_quarter(q_str) or str(q_str).strip()
-    if t_std in df.columns:
-        return t_std
+    q_std = format_quarter(q_str) or str(q_str).strip()
+    candidates = [
+        f"q_{q_std}",
+        q_std,
+        f"q_{q_std.lower()}",
+        q_std.lower(),
+        f"Q_{q_std}",
+        q_std.replace("_", " "),
+        q_std.replace("_", ""),
+    ]
+    for cand in candidates:
+        if cand in df.columns:
+            return cand
     for col in df.columns:
         c_str = str(col).strip()
-        if c_str == t_std or c_str.upper() == t_std.upper():
+        if c_str.upper() in (cand.upper() for cand in candidates):
             return col
-        if c_str.lower() in (f"q_{t_std.lower()}", f"q{t_std.lower()}"):
+        col_q = format_quarter(col)
+        if col_q and col_q == q_std:
             return col
     return None
 
@@ -580,9 +612,10 @@ def _kpi_trend(row: pd.Series, months: tuple[str, ...]) -> dict[str, Any]:
     trend = {}
     for i, m in enumerate(months, 1):
         val = None
+        m_norm = m.replace("-", "_")
         for col in row.index:
             col_str = str(col).strip()
-            if col_str.startswith(m) or col_str == f"m_{m.replace('-', '_')}":
+            if col_str.startswith(m) or col_str.startswith(f"m_{m_norm}") or col_str.startswith(f"m_{m}") or col_str == m:
                 val = _s(row.get(col))
                 break
         if val is not None:
@@ -595,25 +628,52 @@ def enrich_kpis(tables, triggered_ads, qi):
     if not triggered_ads:
         return data, avail
 
-    for sheet, out_key in _SIMPLE_KPIS.items():
-        if sheet not in tables: continue
-        df = tables[sheet].reset_index(drop=True)
+    triggered_map = {str(a).strip().upper(): a for a in triggered_ads}
+
+    for sheet_key, out_key in _SIMPLE_KPIS.items():
+        matched_sheet = _find_sheet(tables, sheet_key)
+        if not matched_sheet:
+            continue
+        df = tables[matched_sheet].reset_index(drop=True)
+
+        # Locate alert definition column
+        ad_col = None
+        for c in ("alert_definition", "alert_definition_id", "alert_def", "alert_definition_code", "ad_id", "ad_name", "ad", "scenario_id"):
+            if c in df.columns:
+                ad_col = c
+                break
+        if not ad_col:
+            for c in df.columns:
+                if df[c].astype(str).str.strip().str.upper().isin(triggered_map).any():
+                    ad_col = c
+                    break
+
+        if not ad_col or df.empty:
+            continue
+
+        # Ingestion quarter filter (if sheet has ingestion_quarter column and matching rows exist)
         if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
-        if "alert_definition" in df.columns:
-            df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
-        
+            target_ing = format_quarter(qi.ingestion) or str(qi.ingestion).strip()
+            sub_df = df[df["ingestion_quarter"].apply(format_quarter) == target_ing].reset_index(drop=True)
+            if not sub_df.empty:
+                df = sub_df
+
         qc_test = _find_q_col(df, qi.test) or _find_q_col(df, qi.ingestion)
         qc_base = _find_q_col(df, qi.base)
-        if not qc_test or df.empty: continue
+        if not qc_test:
+            continue
 
         n = 0
         for _, row in df.iterrows():
-            ad = str(row.get("alert_definition", ""))
+            raw_ad = str(row.get(ad_col, "")).strip()
+            canonical_ad = triggered_map.get(raw_ad.upper())
+            if not canonical_ad:
+                continue
+
             val_test = _s(row.get(qc_test))
             val_base = _s(row.get(qc_base)) if qc_base else None
-            s_ref = str(row.get("_source_ref") or f"{sheet}")
-            
+            s_ref = str(row.get("_source_ref") or f"{matched_sheet}")
+
             diff = None
             if isinstance(val_test, (int, float)) and isinstance(val_base, (int, float)):
                 diff = round(val_test - val_base, 4)
@@ -621,42 +681,61 @@ def enrich_kpis(tables, triggered_ads, qi):
             m_trend = _kpi_trend(row, qi.test_months)
 
             if val_test is not None:
-                data.setdefault(ad, {})[out_key] = val_test
-                data.setdefault(ad, {})[f"{out_key}_base"] = val_base
-                data.setdefault(ad, {})[f"{out_key}_diff"] = diff
-                data.setdefault(ad, {})[f"{out_key}_trend"] = m_trend
+                data.setdefault(canonical_ad, {})[out_key] = val_test
+                data.setdefault(canonical_ad, {})[f"{out_key}_base"] = val_base
+                data.setdefault(canonical_ad, {})[f"{out_key}_diff"] = diff
+                data.setdefault(canonical_ad, {})[f"{out_key}_trend"] = m_trend
                 if out_key == "kpi2b_alerted_customers":
-                    data.setdefault(ad, {})["kpi2b_productive_alert_rate"] = val_test
-                data.setdefault(ad, {}).setdefault("_sources", {})[out_key] = s_ref
-                avail.setdefault(ad, []).append(sheet)
+                    data.setdefault(canonical_ad, {})["kpi2b_productive_alert_rate"] = val_test
+                data.setdefault(canonical_ad, {}).setdefault("_sources", {})[out_key] = s_ref
+                avail.setdefault(canonical_ad, []).append(matched_sheet)
                 n += 1
-        print(f"  [KPI] {sheet}: {n} enriched (Test: {qc_test}, Base: {qc_base})")
+        print(f"  [KPI] {matched_sheet}: {n} enriched (Test col: {qc_test}, Base col: {qc_base})")
 
-    for sheet, cfg in _STRUCT_KPIS.items():
-        if sheet not in tables: continue
-        df = tables[sheet].reset_index(drop=True)
+    for sheet_key, cfg in _STRUCT_KPIS.items():
+        matched_sheet = _find_sheet(tables, sheet_key)
+        if not matched_sheet:
+            continue
+        df = tables[matched_sheet].reset_index(drop=True)
+
+        ad_col = None
+        for c in ("alert_definition", "alert_definition_id", "alert_def", "alert_definition_code", "ad_id", "ad_name", "ad", "scenario_id"):
+            if c in df.columns:
+                ad_col = c
+                break
+        if not ad_col:
+            for c in df.columns:
+                if df[c].astype(str).str.strip().str.upper().isin(triggered_map).any():
+                    ad_col = c
+                    break
+        if not ad_col or df.empty:
+            continue
+
         filt_col = cfg["filter"]
         filt_val = qi.test if filt_col == "test_quarter" else qi.ingestion
         if filt_col in df.columns:
-            df = df[df[filt_col] == filt_val].reset_index(drop=True)
-        if "alert_definition" in df.columns:
-            df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
-        if df.empty: continue
+            sub_df = df[df[filt_col].apply(format_quarter) == format_quarter(filt_val)].reset_index(drop=True)
+            if not sub_df.empty:
+                df = sub_df
 
         n = 0
         for _, row in df.iterrows():
-            ad = str(row.get("alert_definition", ""))
-            s_ref = str(row.get("_source_ref") or f"{sheet}")
+            raw_ad = str(row.get(ad_col, "")).strip()
+            canonical_ad = triggered_map.get(raw_ad.upper())
+            if not canonical_ad:
+                continue
+            s_ref = str(row.get("_source_ref") or f"{matched_sheet}")
             ev = {short: _s(row.get(src)) for src, short in cfg["cols"].items()
                   if _s(row.get(src)) is not None}
             if ev:
-                data.setdefault(ad, {})[cfg["key"]] = ev
-                data.setdefault(ad, {}).setdefault("_sources", {})[cfg["key"]] = s_ref
-                avail.setdefault(ad, []).append(sheet)
+                data.setdefault(canonical_ad, {})[cfg["key"]] = ev
+                data.setdefault(canonical_ad, {}).setdefault("_sources", {})[cfg["key"]] = s_ref
+                avail.setdefault(canonical_ad, []).append(matched_sheet)
                 n += 1
-        print(f"  [KPI] {sheet}: {n} enriched")
+        print(f"  [KPI] {matched_sheet}: {n} enriched")
 
     return data, avail
+
 
 
 
