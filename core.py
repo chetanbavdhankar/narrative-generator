@@ -57,15 +57,17 @@ def format_quarter(val: Any) -> str | None:
         return f"Q{s[4]}_{s[:4]}"
 
     # Fallback: robust pd.to_datetime parsing for all standard ISO, EU, US date formats
-    try:
-        ts = pd.to_datetime(s, errors="coerce")
-        if pd.notna(ts):
-            q = (ts.month - 1) // 3 + 1
-            return f"Q{q}_{ts.year}"
-    except Exception:
-        pass
+    if re.match(r"^\d{4}[-_/]\d{1,2}(?:[-_/]\d{1,2})?$", s) or re.match(r"^\d{1,2}[-_/]\d{1,2}[-_/]\d{4}$", s):
+        try:
+            ts = pd.to_datetime(s, errors="coerce")
+            if pd.notna(ts):
+                q = (ts.month - 1) // 3 + 1
+                return f"Q{q}_{ts.year}"
+        except Exception:
+            pass
 
-    return s
+    return None
+
 
 
 def resolve_quarter(q: str) -> QInfo:
@@ -471,12 +473,21 @@ _KRIS = {"KRI_1": _kri1, "KRI_2": _kri2, "KRI_3": _kri3, "KRI_6": _kri6}
 def filter_kris(tables, qi):
     """Returns {alert_def: [evidence_dicts]} for all triggered KRIs."""
     results = {}
-    for sheet, extractor in _KRIS.items():
-        if sheet not in tables:
+    for sheet_key, extractor in _KRIS.items():
+        matched_sheet = _find_sheet(tables, sheet_key)
+        if not matched_sheet:
             continue
-        df = tables[sheet]
-        if sheet not in df.columns:
+        df = tables[matched_sheet]
+
+        # Locate trigger flag column
+        trig_col = None
+        for c in (sheet_key, sheet_key.lower(), sheet_key.upper(), f"q_{sheet_key}", f"kri_{sheet_key[-1]}"):
+            if c in df.columns:
+                trig_col = c
+                break
+        if not trig_col:
             continue
+
         df = df.reset_index(drop=True)
 
         # Filter 1: Ingestion quarter match (Strictly disregard all rows where ingestion_quarter != user input)
@@ -490,14 +501,22 @@ def filter_kris(tables, qi):
             df = df[df[ing_col].apply(format_quarter) == target_ing].reset_index(drop=True)
 
         # Triggered flag match (KRI_1 == 1, KRI_2 == 1, etc.)
-        triggered_mask = df[sheet].apply(_is_one)
+        triggered_mask = df[trig_col].apply(_is_one)
         triggered = df[triggered_mask].reset_index(drop=True)
-        print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in ingestion quarter {qi.ingestion})")
+        print(f"  [KRI] {matched_sheet}: {len(triggered)} triggered ({len(df)} in ingestion quarter {qi.ingestion})")
 
+        # Locate alert definition column
+        ad_col = None
+        for c in ("alert_definition", "alert_definition_id", "alert_def", "alert_definition_code", "ad_id", "ad_name", "ad", "scenario_id"):
+            if c in triggered.columns:
+                ad_col = c
+                break
+        if not ad_col:
+            ad_col = triggered.columns[0]
 
         for _, row in triggered.iterrows():
             # Filter 2 (for KRI_1, KRI_2, KRI_3 only): base_quarter must be strictly higher than benchmark_quarter
-            if sheet in ("KRI_1", "KRI_2", "KRI_3"):
+            if sheet_key in ("KRI_1", "KRI_2", "KRI_3"):
                 bench_val = None
                 for bcol in ("benchmark_quarter", "benchmark_period", "active_benchmark_quarter", "benchmark"):
                     if bcol in row.index and pd.notna(row.get(bcol)):
@@ -513,9 +532,8 @@ def filter_kris(tables, qi):
                         if not (b_base > b_bench):
                             continue
 
-
-            ad = str(row.get("alert_definition", "?"))
-            s_ref = str(row.get("_source_ref") or f"{sheet}")
+            ad = str(row.get(ad_col, "?")).strip()
+            s_ref = str(row.get("_source_ref") or f"{matched_sheet}")
             meta = _strip({
                 "identity": _identity(row),
                 "thresholds": _thresholds(row),
@@ -528,6 +546,7 @@ def filter_kris(tables, qi):
                 ev["_meta"] = meta
                 results.setdefault(ad, []).append(ev)
     return results
+
 
 
 # ── KPI enrichment ──────────────────────────────────────────────────────────
