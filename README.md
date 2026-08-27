@@ -22,14 +22,12 @@ A lightweight, unified ETL and prompt framework for Transaction Monitoring (TM) 
                                       │
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 2. TWO-STEP LLM GOVERNANCE NARRATIVE SYNTHESIS (prompts/)                  │
-│   • Step 1: Hypothesis Formulation (prompts/hypothesis_prompt.md)          │
-│     - Falsifiable Hypothesis + 3-5 Cited Evidence Points                   │
-│     - Unbroken Causal Chain + Alternative Explanations Evaluation          │
-│   • Step 2: Executive Root Cause Narrative (prompts/narrative_prompt.md)   │
-│     - Strict <= 400 words ceiling                                          │
-│     - Observation -> Analysis -> Deterministic Action Recommendation       │
-│     - Standard Actions: NO ACTION / RECALIBRATE / RE-BAND / DECOM          │
+│ 2. DIRECT LLM EXECUTIVE NARRATIVE SYNTHESIS (prompts/narrative_prompt.md)  │
+│   • Single-Step Direct Generation: Paste Model Dossier -> Final Narrative  │
+│   • Strict 3-Section Format: Observation -> Analysis -> Conclusion         │
+│   • Mandatory Evidence Citations: [REF: <domain>.<metric>=<value>]         │
+│   • Deterministic Governance Actions: NO ACTION / RECALIBRATE / RE-BAND/   │
+│     DECOMMISSION                                                           │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -71,17 +69,14 @@ python main.py \
 
 ---
 
-### Option C: Running the 2-Step LLM Prompts
+### Option C: Generating the Executive Governance Narrative
 
-#### Stage 1: Formulate Hypothesis (`prompts/hypothesis_prompt.md`)
-1. Open [`prompts/hypothesis_prompt.md`](prompts/hypothesis_prompt.md).
-2. Append the target model dossier block (`<model id="..."> ... </model>`) from your generated `_dossiers.md` file.
-3. Pass to the LLM to produce the structured hypothesis (Primary hypothesis statement, cited evidence points, step-by-step causal chain, and counter-evidence check).
-
-#### Stage 2: Generate Executive Narrative (`prompts/narrative_prompt.md`)
 1. Open [`prompts/narrative_prompt.md`](prompts/narrative_prompt.md).
-2. Append the model dossier block and the generated hypothesis from Stage 1.
-3. Pass to the LLM to generate the final executive root-cause narrative ($\le 400$ words) structured into **Observation**, **Analysis**, and **Conclusion & Action Recommendation**.
+2. Copy and paste the target model dossier block (`<model id="..."> ... </model>`) from your generated `_dossiers.md` file under the `# INPUT MODEL DOSSIER` section.
+3. Pass to your LLM to generate the complete, audit-ready executive narrative ($\le 380$ words) structured into:
+   - **Observation**: Factual summary with exact `[REF: ...]` citations.
+   - **Analysis**: Causal diagnosis of customer population behavior, conversion rates, and threshold proximity.
+   - **Conclusion**: Quantitative control integrity risk assessment and final `[ACTION: <TYPE>]` tag.
 
 ---
 
@@ -94,8 +89,7 @@ narrative_generator/
 ├── main.py                   # CLI entry point for batch processing
 ├── start.bat                 # Windows one-click launcher for app.py
 ├── prompts/
-│   ├── hypothesis_prompt.md  # Step 1: Hypothesis, evidence & causal chain prompt
-│   └── narrative_prompt.md   # Step 2: Executive root cause narrative prompt (<= 400 words)
+│   └── narrative_prompt.md   # Standalone Executive Root Cause Narrative Prompt (Observation -> Analysis -> Conclusion)
 ├── requirements.txt          # Dependencies (pandas, openpyxl, flask)
 └── README.md                 # Complete documentation and user guide
 ```
