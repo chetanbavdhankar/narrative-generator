@@ -56,7 +56,6 @@ def format_quarter(val: Any) -> str | None:
     if s.isdigit() and len(s) == 5:
         return f"Q{s[4]}_{s[:4]}"
 
-    # Fallback: robust pd.to_datetime parsing for all standard ISO, EU, US date formats
     if re.match(r"^\d{4}[-_/]\d{1,2}(?:[-_/]\d{1,2})?$", s) or re.match(r"^\d{1,2}[-_/]\d{1,2}[-_/]\d{4}$", s):
         try:
             ts = pd.to_datetime(s, errors="coerce")
@@ -71,9 +70,13 @@ def format_quarter(val: Any) -> str | None:
 
 
 def resolve_quarter(q: str) -> QInfo:
-    std = format_quarter(q) or q.strip()
+
+    std = format_quarter(q) or str(q).strip()
     parts = std.split("_")
-    qn, yr = int(parts[0][1:]), int(parts[1])
+    if len(parts) >= 2 and parts[0].upper().startswith("Q") and parts[0][1:].isdigit() and parts[1].isdigit():
+        qn, yr = int(parts[0][1:]), int(parts[1])
+    else:
+        qn, yr = 1, 2026
 
     def _shift(qn, yr, off):
         t = yr * 4 + (qn - 1) + off
@@ -156,20 +159,7 @@ def normalize_business_line(bl_str: str) -> str:
 
 
 def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
-    """Extract (country, business_line) from anywhere within the filename.
-
-    Naming convention: ...<COUNTRY>_<BUSINESS_LINE>...xlsx
-    Supported business line forms (case-insensitive):
-      RB: RB, Retail, Retail_Bank, Retail_Banking, RetailBank, RetailBanking
-      WB: WB, Wholesale, Wholesale_Bank, Wholesale_Banking, WholesaleBank, WholesaleBanking
-
-    Examples:
-      PL_RB_kri.xlsx                         -> ('PL', 'RB')
-      2026_Q1_PL_retail_banking_kpi.xlsx     -> ('PL', 'RB')
-      alert_data_RO_wholesale_bank.xlsx      -> ('RO', 'WB')
-      FR_retail_2026.xlsx                    -> ('FR', 'RB')
-      data_CH_WB.xlsx                        -> ('CH', 'WB')
-    """
+    """Extract (country, business_line) from anywhere within the filename."""
     if filename.startswith("~$"):
         return None
 
@@ -225,19 +215,17 @@ def _norm_col(c):
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize and deduplicate column names, standardize quarter columns, and reset index."""
-    if df is None or df.empty:
+    if df is None or df.empty or len(df.columns) == 0:
         return pd.DataFrame()
     df.columns = [_norm_col(c) for c in df.columns]
-    # Remove duplicate columns (keeping first occurrence) to prevent DataFrame-valued column slicing
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
     # Standardize all quarter/period values to 'Q<N>_<YYYY>'
     for c in df.columns:
         c_lower = str(c).lower()
-        if "quarter" in c_lower or "benchmark_period" in c_lower:
+        if "quarter" in c_lower or "benchmark" in c_lower:
             df[c] = df[c].apply(format_quarter)
 
-    # Ensure fresh 0..N-1 RangeIndex to prevent axis reindexing errors
     return df.reset_index(drop=True)
 
 
@@ -282,7 +270,6 @@ def load_tables(
     return tables
 
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _s(val):
@@ -290,25 +277,52 @@ def _s(val):
     if val is None:
         return None
     if isinstance(val, (pd.Series, pd.DataFrame)):
-        val = val.iloc[0] if len(val) > 0 else None
+        if len(val) == 0:
+            return None
+        try:
+            val = val.iloc[0]
+        except Exception:
+            return None
         if val is None:
             return None
-    if pd.isna(val):
-        return None
-    return val.item() if hasattr(val, "item") else val
+    try:
+        if pd.isna(val):
+            return None
+    except Exception:
+        pass
+    if hasattr(val, "item") and not isinstance(val, (str, bytes)):
+        try:
+            return val.item()
+        except Exception:
+            return val
+    return val
 
 
 def _is_one(val: Any) -> bool:
     """Robust check for boolean / binary trigger flags (1, 1.0, True, '1')."""
-    if val is None or pd.isna(val):
+    if val is None:
         return False
     if isinstance(val, (pd.Series, pd.DataFrame)):
-        val = val.iloc[0] if len(val) > 0 else None
-        if val is None or pd.isna(val):
+        if len(val) == 0:
             return False
-    if hasattr(val, "item"):
-        val = val.item()
+        try:
+            val = val.iloc[0]
+        except Exception:
+            return False
+        if val is None:
+            return False
+    try:
+        if pd.isna(val):
+            return False
+    except Exception:
+        pass
+    if hasattr(val, "item") and not isinstance(val, (str, bytes)):
+        try:
+            val = val.item()
+        except Exception:
+            pass
     return str(val).strip() in ("1", "1.0", "True", "true") or val == 1
+
 
 
 def _trend(row, months):
@@ -1375,8 +1389,15 @@ def serialize_dossier_markdown(
     # 4. Triggered KRI & Paired KPI Diagnostic Evaluation Units
     if triggered_kris:
         test_q_str = str(quarters.get("test") or "Evaluation Quarter")
-        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
+        base_quarters_list = quarters.get("base_quarters")
+        if quarters.get("base"):
+            base_q_str = str(quarters["base"])
+        elif isinstance(base_quarters_list, list) and len(base_quarters_list) > 0:
+            base_q_str = str(base_quarters_list[0])
+        else:
+            base_q_str = "Baseline"
         parts.append('  <domain name="triggered_kri_evaluations">')
+
 
         for idx, ev in enumerate(triggered_kris, 1):
             kri_key = ev.get("kri", "KRI")
