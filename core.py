@@ -543,7 +543,11 @@ def filter_kris(tables, qi):
                 ad_col = c
                 break
         if not ad_col:
-            ad_col = triggered.columns[0]
+            if len(triggered.columns) > 0:
+                ad_col = triggered.columns[0]
+            else:
+                continue
+
 
         for _, row in triggered.iterrows():
             # Filter 2 (for KRI_1, KRI_2, KRI_3 only): base_quarter must be strictly higher than benchmark_quarter

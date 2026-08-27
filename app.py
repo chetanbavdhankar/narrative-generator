@@ -171,7 +171,10 @@ def run_pipeline():
                 "output_path": str(out_file),
             })
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             results.append({"label": label, "status": "error", "message": str(e)})
+
 
     return jsonify({
         "quarter": qi.ingestion,
