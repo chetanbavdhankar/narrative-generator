@@ -469,31 +469,40 @@ def filter_kris(tables, qi):
             continue
         df = df.reset_index(drop=True)
 
-        # Filter 1: Ingestion quarter match (Filter out anything not same as ingestion quarter)
-        if "ingestion_quarter" in df.columns:
-            df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
+        # Filter 1: Ingestion quarter match (Strictly disregard all rows where ingestion_quarter != user input)
+        ing_col = None
+        for c in ("ingestion_quarter", "active_ingestion_quarter"):
+            if c in df.columns:
+                ing_col = c
+                break
+        if ing_col:
+            target_ing = format_quarter(qi.ingestion) or str(qi.ingestion).strip()
+            df = df[df[ing_col].apply(format_quarter) == target_ing].reset_index(drop=True)
 
         # Triggered flag match (KRI_1 == 1, KRI_2 == 1, etc.)
         triggered_mask = df[sheet].apply(_is_one)
         triggered = df[triggered_mask].reset_index(drop=True)
-        print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in quarter)")
+        print(f"  [KRI] {sheet}: {len(triggered)} triggered ({len(df)} in ingestion quarter {qi.ingestion})")
+
 
         for _, row in triggered.iterrows():
-            # Filter 2 (for KRI_1, KRI_2, KRI_3): base_quarter must be strictly higher than benchmark_quarter
-            bench_val = None
-            for bcol in ("benchmark_quarter", "benchmark_period", "active_benchmark_quarter", "benchmark"):
-                if bcol in row.index and pd.notna(row.get(bcol)):
-                    bench_val = row.get(bcol)
-                    break
+            # Filter 2 (for KRI_1, KRI_2, KRI_3 only): base_quarter must be strictly higher than benchmark_quarter
+            if sheet in ("KRI_1", "KRI_2", "KRI_3"):
+                bench_val = None
+                for bcol in ("benchmark_quarter", "benchmark_period", "active_benchmark_quarter", "benchmark"):
+                    if bcol in row.index and pd.notna(row.get(bcol)):
+                        bench_val = row.get(bcol)
+                        break
 
-            base_val = row.get("base_quarter")
-            if bench_val is not None and base_val is not None:
-                b_bench = _period_to_qnum(bench_val)
-                b_base = _period_to_qnum(base_val)
-                if b_bench is not None and b_base is not None:
-                    # ONLY select if base_quarter is strictly higher than benchmark_quarter
-                    if not (b_base > b_bench):
-                        continue
+                base_val = row.get("base_quarter")
+                if bench_val is not None and base_val is not None:
+                    b_bench = _period_to_qnum(bench_val)
+                    b_base = _period_to_qnum(base_val)
+                    if b_bench is not None and b_base is not None:
+                        # ONLY select if base_quarter is strictly higher than benchmark_quarter
+                        if not (b_base > b_bench):
+                            continue
+
 
             ad = str(row.get("alert_definition", "?"))
             s_ref = str(row.get("_source_ref") or f"{sheet}")
@@ -515,7 +524,7 @@ def filter_kris(tables, qi):
 
 _SIMPLE_KPIS = {
     "KPI_1": "kpi1_alert_count",
-    "KPI_2b": "kpi2b_productive_alert_rate",
+    "KPI_2b": "kpi2b_alerted_customers",
     "KPI_3": "kpi3_customer_count",
     "KPI_6": "kpi6_value",
     "KPI_11": "kpi11_value",
@@ -550,15 +559,35 @@ _STRUCT_KPIS = {
 }
 
 
-def _q_col(df, qi):
-    for q in (qi.ingestion, qi.test):
-        c = f"q_{q}"
-        if c in df.columns:
-            return c
-        for col in df.columns:
-            if str(col).lower() == c.lower():
-                return col
+def _find_q_col(df: pd.DataFrame, q_str: str | None) -> str | None:
+    """Resolve dynamic quarter column name matching standard 'Q{N}_{YYYY}' (e.g. 'Q3_2025', 'Q1_2026')."""
+    if not q_str:
+        return None
+    t_std = format_quarter(q_str) or str(q_str).strip()
+    if t_std in df.columns:
+        return t_std
+    for col in df.columns:
+        c_str = str(col).strip()
+        if c_str == t_std or c_str.upper() == t_std.upper():
+            return col
+        if c_str.lower() in (f"q_{t_std.lower()}", f"q{t_std.lower()}"):
+            return col
     return None
+
+
+def _kpi_trend(row: pd.Series, months: tuple[str, ...]) -> dict[str, Any]:
+    """Extract monthly trend values from row given list of months (e.g. ('2025-07', '2025-08', '2025-09'))."""
+    trend = {}
+    for i, m in enumerate(months, 1):
+        val = None
+        for col in row.index:
+            col_str = str(col).strip()
+            if col_str.startswith(m) or col_str == f"m_{m.replace('-', '_')}":
+                val = _s(row.get(col))
+                break
+        if val is not None:
+            trend[f"m{i} ({m})"] = val
+    return trend
 
 
 def enrich_kpis(tables, triggered_ads, qi):
@@ -573,20 +602,35 @@ def enrich_kpis(tables, triggered_ads, qi):
             df = df[df["ingestion_quarter"] == qi.ingestion].reset_index(drop=True)
         if "alert_definition" in df.columns:
             df = df[df["alert_definition"].isin(triggered_ads)].reset_index(drop=True)
-        qc = _q_col(df, qi)
-        if not qc or df.empty: continue
+        
+        qc_test = _find_q_col(df, qi.test) or _find_q_col(df, qi.ingestion)
+        qc_base = _find_q_col(df, qi.base)
+        if not qc_test or df.empty: continue
 
         n = 0
         for _, row in df.iterrows():
             ad = str(row.get("alert_definition", ""))
-            val = _s(row.get(qc))
+            val_test = _s(row.get(qc_test))
+            val_base = _s(row.get(qc_base)) if qc_base else None
             s_ref = str(row.get("_source_ref") or f"{sheet}")
-            if val is not None:
-                data.setdefault(ad, {})[out_key] = val
+            
+            diff = None
+            if isinstance(val_test, (int, float)) and isinstance(val_base, (int, float)):
+                diff = round(val_test - val_base, 4)
+
+            m_trend = _kpi_trend(row, qi.test_months)
+
+            if val_test is not None:
+                data.setdefault(ad, {})[out_key] = val_test
+                data.setdefault(ad, {})[f"{out_key}_base"] = val_base
+                data.setdefault(ad, {})[f"{out_key}_diff"] = diff
+                data.setdefault(ad, {})[f"{out_key}_trend"] = m_trend
+                if out_key == "kpi2b_alerted_customers":
+                    data.setdefault(ad, {})["kpi2b_productive_alert_rate"] = val_test
                 data.setdefault(ad, {}).setdefault("_sources", {})[out_key] = s_ref
                 avail.setdefault(ad, []).append(sheet)
                 n += 1
-        print(f"  [KPI] {sheet}: {n} enriched")
+        print(f"  [KPI] {sheet}: {n} enriched (Test: {qc_test}, Base: {qc_base})")
 
     for sheet, cfg in _STRUCT_KPIS.items():
         if sheet not in tables: continue
@@ -613,6 +657,7 @@ def enrich_kpis(tables, triggered_ads, qi):
         print(f"  [KPI] {sheet}: {n} enriched")
 
     return data, avail
+
 
 
 # ── Alert Definition Taxonomy Standards (ABCD.123.SS.RR.XY) ─────────────────
@@ -795,7 +840,96 @@ KRI_SPECIFICATIONS: dict[str, dict[str, str]] = {
             "information, quarterly alert counts, and existence checks to flag definitions generating zero alerts across the evaluation "
             "window, ensuring temporary fluctuations are excluded."
         ),
-        "diagnostic_focus": "Control obsolescence, overly restrictive thresholds, data pipeline failures, or rare typology safety nets.",
+    },
+}
+
+KPI_SPECIFICATIONS: dict[str, dict[str, str]] = {
+    "KPI_1": {
+        "title": "Number of Alerts",
+        "formula": "Count of Alerts",
+        "description": "Measures the volume of alerts generated by an Alert Definition during a specific period.",
+        "story_template": "During {test_quarter}, this Alert Definition generated {val} alerts, establishing the gross operational monitoring volume.",
+    },
+    "KPI_2b": {
+        "title": "Number of Alerted Customers",
+        "formula": "Count Distinct(Customer ID)",
+        "description": "Measures unique customers triggering alerts, providing insight into customer coverage versus single-entity alert concentration.",
+        "story_template": "Alerts in {test_quarter} were distributed across {val} unique alerted customers, reflecting broad portfolio coverage.",
+    },
+    "KPI_3": {
+        "title": "Number of Productive Customers",
+        "formula": "Count Distinct(Customer ID where LOD = L3)",
+        "description": "Measures unique customers associated with productive alerts escalated to Level 3 investigation.",
+        "story_template": "{val} distinct customers generated alerts that were escalated to Level 3 review as productive cases in {test_quarter}.",
+    },
+    "KPI_6": {
+        "title": "First Productive Alert Position from Threshold",
+        "formula": "Lowest Percentile Rank among Productive Alerts relative to Threshold Floor",
+        "description": "Evaluates proximity of earliest productive alert to configured threshold floor; values near 0% indicate high threshold sensitivity.",
+        "story_template": "The earliest productive alert occurred at the {val} percentile position above the threshold floor in {test_quarter}.",
+    },
+    "KPI_11": {
+        "title": "False Positive Ratio",
+        "formula": "((Total Alerts - Productive Alerts) / Total Alerts) * 100",
+        "description": "Measures the proportion of alerts closed without escalation, reflecting operational efficiency and noise.",
+        "story_template": "{val}% of all alerts in {test_quarter} were closed as false positives without requiring escalation.",
+    },
+    "KPI_12": {
+        "title": "True Positive Ratio",
+        "formula": "(Productive Alerts / Total Alerts) * 100",
+        "description": "Measures the proportion of alerts resulting in productive outcomes (L3 escalations / SAR filings).",
+        "story_template": "The model achieved a True Positive conversion rate of {val}% in {test_quarter}.",
+    },
+    "KPI_15a": {
+        "title": "Productive Alerts Within Amount Threshold Proximity",
+        "formula": "(Amount Proximity Productive Alerts / Total Productive Alerts) * 100",
+        "description": "Measures the percentage of productive alerts clustered near the configured amount threshold.",
+        "story_template": "{val}% of productive alerts clustered near the Amount threshold boundary in {test_quarter}.",
+    },
+    "KPI_15b": {
+        "title": "Productive Alerts Within Frequency Threshold Proximity",
+        "formula": "(Frequency Proximity Productive Alerts / Total Productive Alerts) * 100",
+        "description": "Measures the percentage of productive alerts clustered near the configured frequency/count threshold.",
+        "story_template": "{val}% of productive alerts clustered near the Frequency threshold boundary in {test_quarter}.",
+    },
+    "KPI_16": {
+        "title": "Number of Productive Alerts",
+        "formula": "Count of Productive Alerts (LOD = L3)",
+        "description": "Measures the absolute volume of productive alerts escalated to Level 3 investigation.",
+        "story_template": "Generated {val} productive (L3 escalated) alerts in {test_quarter}.",
+    },
+    "KPI_17": {
+        "title": "Unique Productivity Within GS Typology",
+        "formula": "Productive alerts uniquely attributable after removing multi-AD overlap",
+        "description": "Measures productive yield uniquely attributable to this Alert Definition within its typology.",
+        "story_template": "Unique productivity metric stood at {val} in {test_quarter} after accounting for typology overlap.",
+    },
+}
+
+KRI_RELEVANT_KPIS: dict[str, dict[str, Any]] = {
+    "KRI_1": {
+        "title": "Deviation in Alert Volume",
+        "primary_kpis": ["KPI_1", "KPI_2b", "KPI_11", "KPI_12"],
+        "secondary_kpis": ["KPI_16", "KPI_3"],
+        "diagnostic_focus": "Evaluates whether alert volume surge is driven by customer breadth (KPI 2b) vs repeat bursts and verifies false positive (KPI 11) vs true positive (KPI 12) conversion stability.",
+    },
+    "KRI_2": {
+        "title": "Deviation in True Positive Volume",
+        "primary_kpis": ["KPI_16", "KPI_3", "KPI_12"],
+        "secondary_kpis": ["KPI_6", "KPI_17", "KPI_17_quarter"],
+        "diagnostic_focus": "Identifies true positive decay breadth across distinct customers (KPI 3) and checks if productive volume was cannibalized by overlapping sister controls (KPI 17/KPI 17_quarter).",
+    },
+    "KRI_3": {
+        "title": "Accumulation in Threshold Proximity",
+        "primary_kpis": ["KPI_15a", "KPI_15b", "KPI_6", "KPI_18_quarter"],
+        "secondary_kpis": ["KPI_16", "KPI_11", "KPI_12"],
+        "diagnostic_focus": "Quantifies productive alert clustering near threshold boundaries (amount KPI 15a, frequency KPI 15b, secondary ratio/profile parameters KPI 18_quarter) to evaluate recalibration vs re-banding.",
+    },
+    "KRI_6": {
+        "title": "Dormant Alert Definition Identification",
+        "primary_kpis": ["KPI_1", "KPI_17_quarter", "KPI_18_quarter"],
+        "secondary_kpis": ["KPI_2b", "KPI_17"],
+        "diagnostic_focus": "Confirms sustained zero-alert generation and isolates root cause between control obsolescence (superseded by sibling rule in KPI 17_quarter), hyper-restrictive parameters (KPI 18_quarter), or pipeline failure.",
     },
 }
 
@@ -974,16 +1108,18 @@ def serialize_dossier_markdown(
         parts.append(_format_metric_row("Base Quarters (Baseline)", ", ".join(quarters["base_quarters"]), "Derived/Quarter_Resolution"))
     parts.append("  </domain>\n")
 
-    # 4. Triggered KRIs Domain (Annotated with verbatim Governance Definitions)
+    # 4. Triggered KRI & Paired KPI Diagnostic Evaluation Units
     if triggered_kris:
-        parts.append('  <domain name="triggered_kris">')
-        parts.append("    | Metric | Value | Source |")
-        parts.append("    |--------|-------|--------|")
-        for ev in triggered_kris:
+        test_q_str = str(quarters.get("test") or "Evaluation Quarter")
+        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
+        parts.append('  <domain name="triggered_kri_evaluations">')
+
+        for idx, ev in enumerate(triggered_kris, 1):
             kri_key = ev.get("kri", "KRI")
             spec = KRI_SPECIFICATIONS.get(kri_key, {})
             kri_title = spec.get("title", kri_key)
             ev_src = ev.get("source", default_src)
+            k_map = KRI_RELEVANT_KPIS.get(kri_key, {})
 
             prefix = f"{kri_key}: {kri_title}"
             if "direction" in ev:
@@ -991,11 +1127,16 @@ def serialize_dossier_markdown(
             elif "sub_trigger" in ev:
                 prefix += f" [{ev['sub_trigger'].upper()}]"
 
-            # Indicator Definitions & Evaluation Logic
+            parts.append(f"\n    ### Evaluation Unit {idx}: {prefix}\n")
+
+            # 1. KRI Trigger Telemetry
+            parts.append(f"    #### 1. KRI Trigger Condition & Telemetry ({kri_key})")
+            parts.append("    | Metric | Value | Source |")
+            parts.append("    |---|---|---|")
             if spec.get("trigger_condition"):
-                parts.append(_format_metric_row(f"{kri_key} Trigger Condition (Brief Rule)", spec["trigger_condition"], "TM_Governance_Policy"))
+                parts.append(_format_metric_row(f"{kri_key} Trigger Rule", spec["trigger_condition"], "TM_Governance_Policy"))
             if spec.get("policy_definition"):
-                parts.append(_format_metric_row(f"{kri_key} Policy Definition (Comprehensive)", spec["policy_definition"], "TM_Governance_Policy"))
+                parts.append(_format_metric_row(f"{kri_key} Policy Definition", spec["policy_definition"], "TM_Governance_Policy"))
             if spec.get("diagnostic_focus"):
                 parts.append(_format_metric_row(f"{kri_key} Diagnostic Focus", spec["diagnostic_focus"], "TM_Governance_Policy"))
 
@@ -1026,6 +1167,74 @@ def serialize_dossier_markdown(
             if "monthly_trend" in ev and ev["monthly_trend"]:
                 trend_str = " | ".join(f"{k}: {v}" for k, v in ev["monthly_trend"].items())
                 parts.append(_format_metric_row(f"{prefix} Monthly Progression", trend_str, ev_src))
+
+            # 2. Directly Corresponding KPI Metrics for this KRI
+            parts.append(f"\n    #### 2. Directly Corresponding KPI Metrics for {kri_key}")
+            parts.append(f"    | KPI Metric | Evaluation ({test_q_str}) | Baseline ({base_q_str}) | Diff (Δ) | Monthly Trend | Relevance | Source |")
+            parts.append("    |---|---|---|---|---|---|---|")
+
+            primary_kpis = k_map.get("primary_kpis", [])
+            secondary_kpis = k_map.get("secondary_kpis", [])
+            all_unit_kpis = [(pk, "Primary Evidence") for pk in primary_kpis] + [(sk, "Supporting Evidence") for sk in secondary_kpis]
+
+            for kpi_code, rel_type in all_unit_kpis:
+                if kpi_code == "KPI_17_quarter" and "kpi17_quarterly_metrics" in kpi_context:
+                    qm = kpi_context["kpi17_quarterly_metrics"]
+                    ov = qm.get("productive_overlap_ratio") or qm.get("general_overlap_ratio") or "Available"
+                    parts.append(f"    | Typology Overlap (KPI_17_quarter) | {ov} | — | — | — | {rel_type} | KPI_17_quarter |")
+                elif kpi_code == "KPI_18_quarter" and "kpi18_quarterly_thresholds" in kpi_context:
+                    parts.append(f"    | Secondary Threshold Limits (KPI_18_quarter) | Available in Context | — | — | — | {rel_type} | KPI_18_quarter |")
+                else:
+                    spec_kpi = KPI_SPECIFICATIONS.get(kpi_code, {})
+                    title = spec_kpi.get("title", kpi_code)
+                    val_test = None
+                    val_base = None
+                    val_diff = None
+                    m_trend = None
+                    src_kpi = kpi_sources.get(kpi_code, kpi_code)
+                    for k_name, s_name in [("kpi1_alert_count", "KPI_1"), ("kpi2b_alerted_customers", "KPI_2b"), ("kpi2b_productive_alert_rate", "KPI_2b"), ("kpi3_customer_count", "KPI_3"), ("kpi6_value", "KPI_6"), ("kpi11_value", "KPI_11"), ("kpi12_value", "KPI_12"), ("kpi15a_value", "KPI_15a"), ("kpi15b_value", "KPI_15b"), ("kpi16_unique_customers", "KPI_16"), ("kpi17_value", "KPI_17")]:
+                        if s_name == kpi_code and k_name in kpi_context:
+                            val_test = kpi_context[k_name]
+                            val_base = kpi_context.get(f"{k_name}_base")
+                            val_diff = kpi_context.get(f"{k_name}_diff")
+                            m_trend = kpi_context.get(f"{k_name}_trend")
+                            src_kpi = kpi_sources.get(k_name, kpi_code)
+                            break
+                    if val_test is not None:
+                        diff_disp = f"{val_diff:+}" if isinstance(val_diff, (int, float)) else (str(val_diff) if val_diff is not None else "—")
+                        trend_disp = " | ".join(f"{k}: {v}" for k, v in m_trend.items()) if m_trend else "—"
+                        b_disp = str(val_base) if val_base is not None else "—"
+                        parts.append(f"    | {title} ({kpi_code}) | {val_test} | {b_disp} | {diff_disp} | {trend_disp} | {rel_type} | {src_kpi} |")
+
+            # 3. Integrated Causal Diagnostic Story for this KRI
+            parts.append(f"\n    #### 3. Integrated Causal Diagnostic Story for {kri_key}")
+            unit_stories = []
+            for kpi_code, _ in all_unit_kpis:
+                if kpi_code in KPI_SPECIFICATIONS:
+                    spec_kpi = KPI_SPECIFICATIONS[kpi_code]
+                    val = None
+                    b_val = None
+                    d_val = None
+                    m_trend = None
+                    for k_name, s_name in [("kpi1_alert_count", "KPI_1"), ("kpi2b_alerted_customers", "KPI_2b"), ("kpi2b_productive_alert_rate", "KPI_2b"), ("kpi3_customer_count", "KPI_3"), ("kpi6_value", "KPI_6"), ("kpi11_value", "KPI_11"), ("kpi12_value", "KPI_12"), ("kpi15a_value", "KPI_15a"), ("kpi15b_value", "KPI_15b"), ("kpi16_unique_customers", "KPI_16"), ("kpi17_value", "KPI_17")]:
+                        if s_name == kpi_code and k_name in kpi_context:
+                            val = kpi_context[k_name]
+                            b_val = kpi_context.get(f"{k_name}_base")
+                            d_val = kpi_context.get(f"{k_name}_diff")
+                            m_trend = kpi_context.get(f"{k_name}_trend")
+                            break
+                    if val is not None:
+                        base_cmp = ""
+                        if b_val is not None:
+                            d_str = f", Δ = {d_val:+}" if isinstance(d_val, (int, float)) else ""
+                            base_cmp = f" (compared to {b_val} in {base_q_str}{d_str})"
+                        story_text = spec_kpi["story_template"].format(test_quarter=test_q_str, val=val, base_cmp=base_cmp)
+                        if m_trend:
+                            story_text += f" Monthly trajectory: {', '.join(f'{mk}: {mv}' for mk, mv in m_trend.items())}."
+                        unit_stories.append(f"    - **{kpi_code} ({spec_kpi['title']}):** {story_text}")
+            if unit_stories:
+                parts.append("\n".join(unit_stories))
+
         parts.append("  </domain>\n")
 
     # 5. Thresholds Domain
@@ -1053,42 +1262,60 @@ def serialize_dossier_markdown(
             parts.append(_format_metric_row(label, v, default_src))
         parts.append("  </domain>\n")
 
-    # 7. KPI Metrics Domain
+    # 7. Portfolio KPI Baseline Domain (Complete Multi-Quarter Telemetry)
     if kpi_context:
-        parts.append('  <domain name="kpi_metrics">')
-        parts.append("    | Metric | Value | Source |")
-        parts.append("    |--------|-------|--------|")
+        test_q_str = str(quarters.get("test") or "Evaluation Quarter")
+        base_q_str = str(quarters.get("base") or (quarters.get("base_quarters", ["Baseline"])[0] if isinstance(quarters.get("base_quarters"), list) else "Baseline"))
+        parts.append('  <domain name="portfolio_kpi_baseline">')
+        parts.append(f"    | Metric | Evaluation ({test_q_str}) | Baseline ({base_q_str}) | Diff (Δ) | Monthly Trend | Source |")
+        parts.append("    |---|---|---|---|---|---|")
         kpi_labels = [
             ("kpi1_alert_count", "Alert Count (KPI_1)", "KPI_1"),
-            ("kpi2b_productive_alert_rate", "Productive Alert Rate % (KPI_2b)", "KPI_2b"),
-            ("kpi3_customer_count", "Customer Count (KPI_3)", "KPI_3"),
-            ("kpi6_value", "KPI 6 Metric Value", "KPI_6"),
-            ("kpi11_value", "KPI 11 Metric Value", "KPI_11"),
-            ("kpi12_value", "KPI 12 Metric Value", "KPI_12"),
-            ("kpi15a_value", "KPI 15a Metric Value", "KPI_15a"),
-            ("kpi15b_value", "KPI 15b Metric Value", "KPI_15b"),
-            ("kpi16_unique_customers", "Unique Customers (KPI_16)", "KPI_16"),
-            ("kpi17_value", "KPI 17 Metric Value", "KPI_17"),
+            ("kpi2b_alerted_customers", "Alerted Customers Count (KPI_2b)", "KPI_2b"),
+            ("kpi2b_productive_alert_rate", "Alerted Customers Count (KPI_2b)", "KPI_2b"),
+            ("kpi3_customer_count", "Productive Customers Count (KPI_3)", "KPI_3"),
+            ("kpi6_value", "First Productive Alert Percentile Position (KPI_6)", "KPI_6"),
+            ("kpi11_value", "False Positive Ratio % (KPI_11)", "KPI_11"),
+            ("kpi12_value", "True Positive Ratio % (KPI_12)", "KPI_12"),
+            ("kpi15a_value", "Amount Proximity Productive Alert Ratio % (KPI_15a)", "KPI_15a"),
+            ("kpi15b_value", "Frequency Proximity Productive Alert Ratio % (KPI_15b)", "KPI_15b"),
+            ("kpi16_unique_customers", "Productive Alerts Count (KPI_16)", "KPI_16"),
+            ("kpi17_value", "Unique Productivity Metric (KPI_17)", "KPI_17"),
         ]
+        rendered_keys = set()
         for key, label, default_sheet in kpi_labels:
-            if key in kpi_context:
+            if key in kpi_context and key not in rendered_keys:
                 src = kpi_sources.get(key, default_sheet)
-                parts.append(_format_metric_row(label, kpi_context[key], src))
+                val_test = kpi_context.get(key)
+                val_base = kpi_context.get(f"{key}_base") or "—"
+                val_diff = kpi_context.get(f"{key}_diff")
+                diff_disp = f"{val_diff:+}" if isinstance(val_diff, (int, float)) else (str(val_diff) if val_diff is not None else "—")
+                m_trend = kpi_context.get(f"{key}_trend")
+                trend_disp = " | ".join(f"{k}: {v}" for k, v in m_trend.items()) if m_trend else "—"
+                parts.append(f"    | {label} | {val_test} | {val_base} | {diff_disp} | {trend_disp} | {src} |")
+                rendered_keys.add(key)
+                if key == "kpi2b_alerted_customers":
+                    rendered_keys.add("kpi2b_productive_alert_rate")
 
         # Structured KPI 17
         if "kpi17_quarterly_metrics" in kpi_context:
             src = kpi_sources.get("kpi17_quarterly_metrics", "KPI_17_quarter")
             for sub_k, sub_v in kpi_context["kpi17_quarterly_metrics"].items():
                 label = f"KPI_17 Quarterly {sub_k.replace('_', ' ').title()}"
-                parts.append(_format_metric_row(label, sub_v, src))
+                parts.append(f"    | {label} | {sub_v} | — | — | — | {src} |")
 
         # Structured KPI 18
         if "kpi18_quarterly_thresholds" in kpi_context:
             src = kpi_sources.get("kpi18_quarterly_thresholds", "KPI_18_quarter")
             for sub_k, sub_v in kpi_context["kpi18_quarterly_thresholds"].items():
                 label = f"KPI_18 Quarterly {sub_k.replace('_', ' ').title()}"
-                parts.append(_format_metric_row(label, sub_v, src))
+                parts.append(f"    | {label} | {sub_v} | — | — | — | {src} |")
+
         parts.append("  </domain>\n")
+
+
+
+
 
     # 8. Governance & Recommendations Domain
     if rec:

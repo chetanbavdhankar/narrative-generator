@@ -169,3 +169,14 @@ The LLM selects exactly one of the 4 standard governance actions:
 
 For detailed mapping between KRIs, KPIs, and underlying ingestion table schemas, see [`kri_kpi_mapping.md`](kri_kpi_mapping.md).
 
+---
+
+## 6. Recent Changes & Paired Evaluation Architecture
+- **Why:** Presenting KRIs and KPIs in disconnected sections fragmented causal analysis; pairing each KRI directly with its relevant KPIs creates a complete, self-contained diagnostic story.
+- **How:** Restructured `serialize_dossier_markdown()` in `core.py` into `<domain name="triggered_kri_evaluations">`, where each Evaluation Unit contains:
+  1. **KRI Trigger Telemetry**: Test/Base volume counts, statistical deviation, 3-sigma flag, monthly progression, policy definition.
+  2. **Directly Paired KPI Metrics**: Primary & supporting KPIs with Test vs Baseline values, differences ($\Delta$), monthly trends, and relevance tags.
+  3. **Integrated Causal Diagnostic Story**: Plain-English narrative synthesizing the KRI trigger mechanics with the KPI evidence into one cohesive root cause.
+- **Impact:** LLM governance prompts receive clean, unified diagnostic context per trigger, preventing hallucinated or disconnected reasoning across multiple concurrent KRIs.
+
+

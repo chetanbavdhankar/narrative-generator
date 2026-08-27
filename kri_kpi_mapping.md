@@ -1,183 +1,300 @@
-# TM Governance: KRI-to-KPI Diagnostic Mapping & Technical Schema Matrix
+# TM Governance: KRI-to-KPI Diagnostic Mapping, Column Schemas & Narrative Stories
 
-Comprehensive reference mapping connecting **Key Risk Indicator (KRI)** trigger mechanics to **Key Performance Indicator (KPI)** diagnostics and their underlying data schemas in `core.py`.
+This reference document provides the definitive mapping between **Key Risk Indicators (KRIs)**, supporting **Key Performance Indicators (KPIs)**, exact **Excel table schemas**, and **plain-English narrative story templates** for Transaction Monitoring (TM) Model Governance.
 
 ---
 
-## 1. Governance Baseline & Temporal Evaluation Architecture
+## 1. Quarter Format Standards & Resolution Lifecycle
 
-All KRI triggers evaluate Alert Definition (AD) health by comparing performance against certified baselines:
-- **Benchmark Quarter ($Q_{\text{bench}}$)**: Certified deployment baseline when thresholds and models are verified.
-- **Base Quarter ($Q_{\text{base}}$)**: Historical comparison period ($Q_{\text{base}} > Q_{\text{bench}}$).
-- **Test Quarter ($Q_{\text{test}}$)**: Current evaluation period ($Q_{\text{test}} > Q_{\text{base}} \ge Q_{\text{bench}} + 1$).
+### A. Strict Standard Quarter Format: `Q{N}_{YYYY}`
+All quarterly columns in the Excel workbooks follow a strict, standardized naming convention:
+- **Format**: `Q{N}_{YYYY}` (Capital `Q`, quarter number `1-4`, underscore `_`, 4-digit year `YYYY`).
+- **Examples**: `Q1_2025`, `Q2_2025`, `Q3_2025`, `Q4_2025`, `Q1_2026`.
+- **Monthly Format**: `YYYY-MM-01` (e.g., `2025-07-01`, `2025-08-01`, `2025-09-01`).
+
+### B. Quarter Resolution Chain
+Given an input **Ingestion Quarter** provided during a governance cycle:
+1. **Ingestion Quarter ($Q_{\text{ingestion}}$)**: The active reporting period (e.g., `Q1_2026`).
+2. **Test Quarter ($Q_{\text{test}}$)**: The evaluation period under test, resolved as **2 quarters prior** to ingestion ($Q_{\text{ingestion}} - 2$ quarters, e.g., `Q3_2025`).
+3. **Base Quarter ($Q_{\text{base}}$)**: The comparative baseline quarter, resolved as **3 quarters prior** to ingestion ($Q_{\text{ingestion}} - 3$ quarters, e.g., `Q2_2025`).
+4. **Benchmark Quarter ($Q_{\text{bench}}$)**: The certified deployment baseline ($Q_{\text{base}} > Q_{\text{bench}}$, e.g., `Q1_2023`).
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    TM KRI MONITORING FRAMEWORK                                   │
-├─────────────────────────┬─────────────────────────┬────────────────────┬─────────────────────────┤
-│          KRI 1          │          KRI 2          │       KRI 3        │          KRI 6          │
-│   Gross Volume Shift    │   True Positive Decay   │ Proximity Clustered│     Control Dormancy    │
-│  (1-3σ / ≥3σ + Volume)  │ (Downward 1-3σ / ≥3σ)   │  (10-50% / ≥50% TP)│  (3Q Active -> 3Q Zero) │
-└─────────────────────────┴─────────────────────────┴────────────────────┴─────────────────────────┘
+│                                 QUARTER RESOLUTION LIFECYCLE                                     │
+├──────────────────────────┬──────────────────────────┬────────────────────────┬───────────────────┤
+│    Benchmark Quarter     │       Base Quarter       │      Test Quarter      │ Ingestion Quarter │
+│         Q_bench          │     Q_base (Ing - 3)     │    Q_test (Ing - 2)    │   Q_ingestion     │
+│   e.g. Q1_2023 (Deploy)  │   e.g. Q2_2025 (Base)    │   e.g. Q3_2025 (Eval)  │ e.g. Q1_2026 (Now)│
+└──────────────────────────┴──────────────────────────┴────────────────────────┴───────────────────┘
 ```
 
 ---
 
-## 2. Ingestion Table Schemas & Codebase Columns (`core.py`)
+## 2. KPI Catalog: Definitions, Schemas & Plain-English Story Templates
 
-In `core.py`, data tables are loaded from quarterly workbooks and filtered by `ingestion_quarter`, `test_quarter`, and `alert_definition`:
-
-| Sheet / Table Name | Table Type | Available / Extracted Columns | Target Output Key in Dossier |
-| :--- | :--- | :--- | :--- |
-| `KPI_1` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi1_alert_count` |
-| `KPI_2b` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi2b_productive_alert_rate` (Alerted Customers) |
-| `KPI_3` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi3_customer_count` (Productive Customers / L3) |
-| `KPI_6` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi6_value` (First Productive Alert Percentile Rank) |
-| `KPI_11` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi11_value` (False Positive Rate %) |
-| `KPI_12` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi12_value` (True Positive Rate %) |
-| `KPI_15a` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi15a_value` (Amount Proximity TP %) |
-| `KPI_15b` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi15b_value` (Frequency Proximity TP %) |
-| `KPI_16` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi16_unique_customers` (Total Productive Alerts / TPs) |
-| `KPI_17` | Simple (Quarterly) | `alert_definition`, `q_<ingestion_quarter>`, `q_<test_quarter>` | `kpi17_value` (Unique Productivity Ratio) |
-| `KPI_17_quarter` | Structured Table | `alert_definition`, `test_quarter`, `alert_count`, `tp_count`, `false_positive_rate`, `general_overlap_ratio`, `prod_general_overlap_ratio` | `kpi17_quarterly_metrics` |
-| `KPI_18_quarter` | Structured Table | `alert_definition`, `test_quarter`, `alert_count`, `tp_count`, `min_amount_threshold`, `max_amount_threshold`, `min_frequency_threshold` | `kpi18_quarterly_thresholds` |
-| `KRI_1` / `2` / `3` / `6` | Trigger Tables | `test_quarter_count`, `base_quarter_count`, `test_base_quarter_diff`, `full_period_avg(*)`, `full_period_stddev_pop(*)`, `*_three_sigma_exceeded`, `*_with_consecutive`, `m_<month>` | `triggered_kris` |
+Every KPI is documented below with its formal definition, exact Excel sheet and dynamic column location (`Q{N}_{YYYY}` / `YYYY-MM-01`), and an **Executive Narrative Story Template** that translates raw numbers into intuitive business context.
 
 ---
 
-## 3. KRI-to-KPI Deep-Dive & Diagnostic Mappings
+### KPI 1: Number of Alerts (Gross Alert Volume)
+* **Purpose**: Measures the gross scale of alert generation activity for an Alert Definition during a reporting period.
+* **Formula**:
+  $$\text{KPI 1} = \text{Count of Alerts}$$
+* **Source Sheet**: `KPI_1`
+* **Target Columns**:
+  - Test Quarter Volume: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+  - Monthly Breakdown: Dynamic columns `YYYY-MM-01` matching $Q_{\text{test}}$ months (e.g., `2025-07-01`, `2025-08-01`, `2025-09-01`).
+* **Executive Story Template**:
+  > *"During Q3_2025, this Alert Definition generated a total of **{Q3_2025_value} alerts** (compared to **{Q2_2025_value} alerts** in base quarter Q2_2025), with a monthly trajectory of {M1_val} in Jul, {M2_val} in Aug, and {M3_val} in Sep."*
+
+---
+
+### KPI 2b: Number of Alerted Customers (Customer Coverage)
+* **Purpose**: Measures the unique number of distinct customers that triggered alerts during the period, providing insight into customer breadth versus repeat alert concentration.
+* **Formula**:
+  $$\text{KPI 2b} = \text{Count Distinct}(\text{Customer ID})$$
+* **Source Sheet**: `KPI_2b`
+* **Target Columns**:
+  - Test Quarter Unique Customers: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+  - Base Quarter Comparison: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{base}}$ (e.g., `Q2_2025`).
+* **Executive Story Template**:
+  > *"A total of **{Q3_2025_value} unique customers** triggered alerts in Q3_2025. With {KPI_1_value} total alerts, this represents an average of **{KPI_1_value / Q3_2025_value:.1f} alerts per customer**, indicating whether alert volume is broadly distributed across the portfolio or concentrated among a few repeat entities."*
+
+---
+
+### KPI 3: Number of Productive Customers (Level 3 Escalated Entities)
+* **Purpose**: Measures the number of unique customers associated with productive alerts that were escalated to Level 3 (L3) compliance review / SAR filing.
+* **Formula**:
+  $$\text{KPI 3} = \text{Count Distinct}(\text{Customer ID where LOD} = \text{L3})$$
+* **Source Sheet**: `KPI_3`
+* **Target Columns**:
+  - Test Quarter Productive Customers: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+  - Base Quarter Comparison: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{base}}$ (e.g., `Q2_2025`).
+* **Executive Story Template**:
+  > *"In Q3_2025, **{Q3_2025_value} distinct customers** generated alerts that were confirmed as productive and escalated to Level 3 investigation (compared to **{Q2_2025_value} productive customers** in Q2_2025)."*
+
+---
+
+### KPI 4b: Upstream Transaction Volume & Population
+* **Purpose**: Measures changes in underlying customer population and transaction flow volume over time.
+* **Formula**:
+  $$\text{KPI 4b} = \text{Total Processed Transactions / Eligible Customer Population}$$
+* **Source Sheet**: Ingestion metadata / `parsed_acd` (`ATL_pop`) / `country_stats` (`number_of_unique_customers_count`).
+* **Executive Story Template**:
+  > *"The total eligible monitored customer population stood at **{pop_count} active accounts** in Q3_2025, confirming that alert volume shifts reflect organic underlying banking activity rather than data pipeline defects."*
+
+---
+
+### KPI 6: First Productive Alert Position from Threshold
+* **Purpose**: Identifies how close the earliest productive (L3 escalated) alert was to the configured threshold floor. Lower percentiles indicate high threshold sensitivity.
+* **Formula**:
+  $$\text{KPI 6} = \text{Min Percentile Rank of Productive Alerts relative to Threshold Floor}$$
+* **Source Sheet**: `KPI_6` / `KRI_3` (`first_productive_percentile_position`)
+* **Target Columns**:
+  - Test Quarter Position: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+* **Executive Story Template**:
+  > *"The earliest productive alert occurred at the **{Q3_2025_value * 100:.1f}th percentile** of the alert distribution above the threshold floor. A value close to 0% confirms that productive risk is tightly stacked immediately above the current boundary."*
+
+---
+
+### KPI 11: False Positive Ratio (%)
+* **Purpose**: Measures the proportion of generated alerts that were closed without escalation, reflecting operational efficiency and investigator noise.
+* **Formula**:
+  $$\text{KPI 11} = \frac{\text{Total Alerts} - \text{Productive Alerts}}{\text{Total Alerts}} \times 100$$
+* **Source Sheet**: `KPI_11` / `KPI_17_quarter` (`false_positive_rate`)
+* **Target Columns**:
+  - Test Quarter FP Rate: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+* **Executive Story Template**:
+  > *"In Q3_2025, **{Q3_2025_value:.1f}% of all alerts** were determined to be false positives and closed at L1/L2 triage without requiring escalation."*
+
+---
+
+### KPI 12: True Positive Ratio (%) / Productive Alert Rate
+* **Purpose**: Measures the proportion of generated alerts that resulted in productive outcomes (L3 escalations / SAR filings).
+* **Formula**:
+  $$\text{KPI 12} = \frac{\text{Productive Alerts}}{\text{Total Alerts}} \times 100$$
+* **Source Sheet**: `KPI_12`
+* **Target Columns**:
+  - Test Quarter TP Rate: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+* **Executive Story Template**:
+  > *"The model achieved a **True Positive conversion rate of {Q3_2025_value:.1f}%** in Q3_2025, demonstrating the proportion of alerts that successfully identified suspicious financial crime activity."*
+
+---
+
+### KPI 15a: Productive Alerts Within Amount Threshold Proximity (%)
+* **Purpose**: Measures the proportion of productive alerts occurring within a predefined proximity window along the transaction amount threshold dimension.
+* **Formula**:
+  $$\text{KPI 15a} = \frac{\text{Amount Proximity Productive Alerts}}{\text{Total Productive Alerts}} \times 100$$
+* **Source Sheet**: `KPI_15a` / `KRI_3` (`test_quarter_accum_ratio_amount`)
+* **Target Columns**:
+  - Test Quarter Amount Proximity: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+* **Executive Story Template**:
+  > *"In Q3_2025, **{Q3_2025_value:.1f}% of all productive alerts** clustered tightly within the threshold proximity window along the Amount boundary, indicating strong sensitivity to transaction value cutoffs."*
+
+---
+
+### KPI 15b: Productive Alerts Within Frequency Threshold Proximity (%)
+* **Purpose**: Measures the proportion of productive alerts occurring within a predefined proximity window along the transaction frequency/count threshold dimension.
+* **Formula**:
+  $$\text{KPI 15b} = \frac{\text{Frequency Proximity Productive Alerts}}{\text{Total Productive Alerts}} \times 100$$
+* **Source Sheet**: `KPI_15b` / `KRI_3` (`test_quarter_accum_ratio_freq`)
+* **Target Columns**:
+  - Test Quarter Frequency Proximity: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+* **Executive Story Template**:
+  > *"In Q3_2025, **{Q3_2025_value:.1f}% of all productive alerts** clustered tightly within the proximity window along the Frequency/Count boundary."*
+
+---
+
+### KPI 16: Number of Productive Alerts (L3 Escalation Count)
+* **Purpose**: Measures the absolute count of productive alerts escalated to Level 3 compliance review.
+* **Formula**:
+  $$\text{KPI 16} = \text{Count of Productive Alerts (LOD = L3)}$$
+* **Source Sheet**: `KPI_16` / `KRI_2` (`test_quarter_count`) / `KRI_3` (`productive_alerts_count`)
+* **Target Columns**:
+  - Test Quarter Productive Alerts: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+  - Base Quarter Comparison: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{base}}$ (e.g., `Q2_2025`).
+* **Executive Story Template**:
+  > *"The Alert Definition generated **{Q3_2025_value} productive alerts** in Q3_2025 (compared to **{Q2_2025_value} productive alerts** in Q2_2025)."*
+
+---
+
+### KPI 17: Unique Productivity Within Typology (Overlap & Redundancy)
+* **Purpose**: Evaluates productive yield attributable uniquely to this model after removing multi-AD typology overlap.
+* **Formula**:
+  $$\text{KPI 17} = \text{Unique Productive Alerts after Typology De-duplication}$$
+* **Source Sheet**: `KPI_17` (Time Series `metric` rows) / `KPI_17_quarter`
+* **Target Columns**:
+  - `KPI_17`: Dynamic column `Q{N}_{YYYY}` matching $Q_{\text{test}}$ (e.g., `Q3_2025`).
+  - `KPI_17_quarter`: `general_overlap_ratio`, `prod_general_overlap_ratio`, `typology_top_overlapping_AD_prod_alerts`.
+* **Executive Story Template**:
+  > *"This Alert Definition shares a **{prod_general_overlap_ratio * 100:.1f}% productive overlap** with sibling control **{typology_top_overlapping_AD_prod_alerts}**, generating **{unique_tp_alerts_count_within_typology} unique productive alerts** that are not captured by any other rule in the typology."*
+
+---
+
+### KPI 18: Secondary Configuration Parameters & Proximity Distances
+* **Purpose**: Evaluates productive cases against secondary limits (ratios, profile multipliers, z-scores, velocity increases).
+* **Source Sheet**: `KPI_18_quarter`
+* **Target Columns**:
+  - Distance to Min Ratio: `abs_distance_first_tp_and_min_ratio_threshold`
+  - Distance to Profile Threshold: `abs_distance_of_the_min_tp_average_amount_and_profile_min_threshold_value`
+  - Distance to Z-Score Limit: `abs_distance_first_tp_and_zscore_threshold`
+* **Executive Story Template**:
+  > *"The closest productive alert was positioned at a mathematical distance of **{abs_distance}** from the secondary threshold limit ({param_name} = {param_val}), confirming parameter boundary responsiveness."*
+
+---
+
+## 3. Comprehensive KRI-to-KPI Column Level Mapping
+
+```mermaid
+graph TD
+    K1[KRI 1: Alert Volume Shift] --> KPI1[KPI 1: Q_test Alert Count]
+    K1 --> KPI2b[KPI 2b: Q_test Alerted Customers]
+    K1 --> KPI11_12[KPI 11 / 12: FP & TP Ratios]
+    K1 --> CSTAT[country_stats: Open Alert Ratio]
+
+    K2[KRI 2: True Positive Decay] --> KPI16[KPI 16: Q_test Productive Alerts]
+    K2 --> KPI3[KPI 3: Q_test Productive Customers]
+    K2 --> KPI17Q[KPI 17_quarter: Overlap Ratios]
+
+    K3[KRI 3: Proximity Accumulation] --> KPI15[KPI 15a/b: Amount & Freq Proximity %]
+    K3 --> KPI6[KPI 6: 1st Productive Position]
+    K3 --> KPI18Q[KPI 18_quarter: Secondary Distances]
+
+    K6[KRI 6: Control Dormancy] --> KRI6S[KRI 6: Q_T, Q_T-1, Q_T-2 = 0]
+    K6 --> THRESH[thresholds: Active Boundaries]
+```
+
+---
 
 ### KRI 1: Deviation in Alert Volume (Gross Alert Volatility)
+* **Trigger Conditions**:
+  - $1\text{--}3\sigma$ deviation + $|\Delta_{\text{vol}}| \ge 50$ (RB) / $\ge 30$ (WB) for $\ge 2$ consecutive test quarters.
+  - $\ge 3\sigma$ deviation + $|\Delta_{\text{vol}}| \ge 50$ (RB) / $\ge 30$ (WB) in 1 single quarter.
 
-#### Technical Logic & Trigger Conditions
-Evaluates statistical deviation of test quarter monthly alert volume against historical distribution:
-$$\Delta_{\text{vol}} = \text{Count}(Q_{\text{test}}) - \text{Count}(Q_{\text{base}}), \quad \text{Z-Score} = \frac{|\Delta_{\text{vol}}|}{\sigma_{\text{pop}}}$$
-- **Persistent Shift:** $1.0 \le \text{Z-Score} < 3.0$ **AND** $|\Delta_{\text{vol}}| \ge 50$ (Retail) / $\ge 30$ (Wholesale) for **$\ge 2$ consecutive test quarters**.
-- **Extreme Anomaly:** $\text{Z-Score} \ge 3.0$ **AND** $|\Delta_{\text{vol}}| \ge 50$ (Retail) / $\ge 30$ (Wholesale) in **1 single quarter**.
-
-#### Business Value & Governance Implications
-Prevents operational investigator backlog, identifies customer demographic surges, flags upstream ETL duplicates, and highlights macro transactional drift.
-
-#### Relevant KPIs & Schema Mapping
-| Relevant KPI | Codebase Source Table | Extracted / Target Columns | Diagnostic Purpose for KRI 1 |
+| Source Sheet | Target Column Name | Format / Nature | Diagnostic Function |
 | :--- | :--- | :--- | :--- |
-| **KPI 1** (Alert Count) | `KPI_1` / `KRI_1` | `q_<test_quarter>`, `test_quarter_count`, `base_quarter_count`, `difference` | Establishes the exact quarterly alert count and absolute delta against baseline. |
-| **KPI 2b** (Alerted Customers) | `KPI_2b` | `q_<test_quarter>`, `q_<base_quarter>` | Ratio $\frac{\text{KPI 1}}{\text{KPI 2b}}$ reveals if volume surge is spread across new customers (macro growth) or repeat alerts on few entities (smurfing/burst). |
-| **KPI 4b** (Tx Volume) | Feeds / System Metadata | `transaction_volume`, `transaction_count` | Correlates whether alert surge is linearly explained by upstream transaction growth. |
-| **KPI 11** (FP Ratio) | `KPI_11` / `KPI_17_quarter` | `q_<test_quarter>`, `false_positive_rate` | Identifies whether the volume spike degraded operational efficiency with low-quality alerts. |
-| **KPI 12** (TP Ratio) | `KPI_12` | `q_<test_quarter>` | Evaluates whether the volume surge yielded a proportional increase in detected risk. |
-| **KPI 16** (Productive Alerts) | `KPI_16` / `KPI_17_quarter` | `q_<test_quarter>`, `tp_count` | Confirms if absolute productive output scaled with gross alert volume. |
+| **`KRI_1`** | `test_quarter_count`, `base_quarter_count`, `test_base_quarter_diff` | Integer Scalar | Core volume deviation vs. baseline. |
+| **`KRI_1`** | `full_period_avg(count)`, `full_period_stddev_pop(count)` | Float Scalar | Historical statistical distribution ($\mu \pm 3\sigma$). |
+| **`KRI_1`** | `KRI_1_incrs_three_sigma_exceeded`, `KRI_1_incrs_with_consecutive` | Flag (`0`/`1`) | Single-quarter anomaly vs multi-quarter persistent shift. |
+| **`KPI_1`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`, `Q2_2025`) | Dynamic Time-Series | Point-in-time gross alert volume for test & base quarters. |
+| **`KPI_1`** | `YYYY-MM-01` (e.g. `2025-07-01`, `2025-08-01`, `2025-09-01`) | Dynamic Time-Series | Monthly progression within test quarter. |
+| **`KPI_2b`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`, `Q2_2025`) | Dynamic Time-Series | Unique alerted customer count (Alerts/Customer ratio). |
+| **`KPI_11`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | False Positive rate (%) to identify operational noise. |
+| **`KPI_12`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | True Positive rate (%) to verify conversion stability. |
+| **`country_stats`** | `ratio_of_open_alerts_quarterly`, `number_of_open_alerts_quarterly` | Portfolio Aggregates | Operational investigator backlog impact. |
 
 ---
 
 ### KRI 2: Deviation in True Positive Volume (Detection Capability Decay)
+* **Trigger Conditions**:
+  - Downward $1\text{--}3\sigma$ + drop $\ge 15$ TPs (RB) / $\ge 10$ TPs (WB) for $\ge 2$ consecutive test quarters.
+  - Downward $\ge 3\sigma$ + drop $\ge 15$ TPs (RB) / $\ge 10$ TPs (WB) in 1 single quarter.
 
-#### Technical Logic & Trigger Conditions
-Evaluates downward statistical shifts in productive alerts (escalated to L3 / SAR/STR):
-$$\Delta_{\text{TP}} = \text{TP}(Q_{\text{test}}) - \text{TP}(Q_{\text{base}})$$
-- **Persistent Decay:** Downward $1.0 \le \text{Z-Score} < 3.0$ **AND** drop $\ge 15$ TPs (Retail) / $\ge 10$ TPs (Wholesale) across **$\ge 2$ consecutive quarters**.
-- **Severe Collapse:** Downward $\text{Z-Score} \ge 3.0$ **AND** drop $\ge 15$ TPs (Retail) / $\ge 10$ TPs (Wholesale) in **1 single quarter**.
-
-#### Business Value & Governance Implications
-Uncovers silent control degradation, obsolete threshold calibration, evasion by illicit actors, or cannibalization by overlapping controls.
-
-#### Relevant KPIs & Schema Mapping
-| Relevant KPI | Codebase Source Table | Extracted / Target Columns | Diagnostic Purpose for KRI 2 |
+| Source Sheet | Target Column Name | Format / Nature | Diagnostic Function |
 | :--- | :--- | :--- | :--- |
-| **KPI 16** (Productive Alerts) | `KPI_16` / `KRI_2` | `q_<test_quarter>`, `full_period_avg(productive_alerts_count)`, `difference` | Direct quantification of the drop in L3 escalated alerts. |
-| **KPI 3** (Productive Customers) | `KPI_3` | `q_<test_quarter>`, `q_<base_quarter>` | Distinguishes whether we lost a single large productive client vs. broad systematic loss of true positive customers across the portfolio. |
-| **KPI 12** (TP Ratio) | `KPI_12` | `q_<test_quarter>` | Assesses conversion efficiency collapse ($\text{TP} / \text{Total Alerts}$). |
-| **KPI 6** (1st Productive Position) | `KPI_6` | `q_<test_quarter>` | Reveals if productive transactions shifted further away from the threshold, signaling typology migration. |
-| **KPI 17** (Unique Productivity) | `KPI_17` / `KPI_17_quarter` | `q_<test_quarter>`, `prod_general_overlap_ratio`, `general_overlap_ratio` | Identifies if the drop is an illusion caused by a sister AD in the same typology capturing the alerts first. |
-| **KPI 13** (Effectiveness Classification) | Derived Metric | `kpi12_value`, `kpi16_unique_customers` | Categorizes if the AD has transitioned into an "ineffective" state. |
+| **`KRI_2`** | `test_quarter_count`, `base_quarter_count`, `test_base_quarter_diff` | Integer Scalar | Absolute drop in L3 escalated alerts. |
+| **`KRI_2`** | `full_period_avg(productive_alerts_count)`, `full_period_stddev_pop(productive_alerts_count)` | Float Scalar | Historical productive baseline distribution. |
+| **`KPI_16`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`, `Q2_2025`) | Dynamic Time-Series | Quarterly productive alert count time-series. |
+| **`KPI_3`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`, `Q2_2025`) | Dynamic Time-Series | Unique productive customer count (L3 entities). |
+| **`KPI_12`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | Conversion efficiency rate (%) collapse. |
+| **`KPI_6`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | Percentile rank shift of remaining productive alerts. |
+| **`KPI_17_quarter`**| `prod_general_overlap_ratio`, `typology_top_overlapping_AD_prod_alerts` | Overlap Vector | Identifies if sibling AD captured the productive alerts. |
 
 ---
 
 ### KRI 3: Accumulation in Threshold Proximity (Boundary Sensitivity)
+* **Trigger Conditions**:
+  - $10\text{--}50\%$ proximity accumulation shift + $5\text{--}10$ TPs in proximity for $\ge 2$ consecutive test quarters.
+  - $\ge 50\%$ proximity accumulation shift + $\ge 10$ TPs in proximity in 1 single quarter.
 
-#### Technical Logic & Trigger Conditions
-Measures whether productive cases (TPs) cluster right at the edge of the trigger threshold ($[\text{Threshold}, \text{Threshold} + \delta]$):
-$$\Delta_{\text{accum\_ratio}} = \text{Ratio}_{\text{prox}}(Q_{\text{test}}) - \text{Ratio}_{\text{prox}}(Q_{\text{base}})$$
-- **Moderate Accumulation:** $10\% \le \Delta_{\text{accum\_ratio}} < 50\%$ **AND** $5 \le \text{TPs in proximity} \le 10$ for **$\ge 2$ consecutive quarters**.
-- **High Accumulation:** $\Delta_{\text{accum\_ratio}} \ge 50\%$ **AND** $\text{TPs} \ge 10$ in **1 single quarter**.
-
-#### Business Value & Governance Implications
-Identifies smurfing/structuring patterns just above thresholds and highlights high boundary elasticity where minor threshold tuning significantly impacts risk capture.
-
-#### Relevant KPIs & Schema Mapping
-| Relevant KPI | Codebase Source Table | Extracted / Target Columns | Diagnostic Purpose for KRI 3 |
+| Source Sheet | Target Column Name | Format / Nature | Diagnostic Function |
 | :--- | :--- | :--- | :--- |
-| **KPI 15a** (Amount Proximity TP) | `KPI_15a` / `KRI_3` | `q_<test_quarter>`, `test_quarter_accum_ratio_amount`, `kri3_amount_deviation` | Quantifies the % of productive alerts clustered near the minimum/maximum amount thresholds. |
-| **KPI 15b** (Freq Proximity TP) | `KPI_15b` / `KRI_3` | `q_<test_quarter>`, `kri3_freq_deviation` | Quantifies the % of productive alerts clustered near transaction count/frequency thresholds. |
-| **KPI 6** (1st Productive Position) | `KPI_6` | `q_<test_quarter>` | Pinpoints the lowest percentile rank of TPs; values close to $0.00\text{--}0.10$ confirm boundary stacking. |
-| **KPI 18** (Secondary Parameters) | `KPI_18_quarter` | `min_amount_threshold`, `max_amount_threshold`, `min_frequency_threshold` | Evaluates proximity against secondary limits (ratios, profile multipliers, z-score cutoffs). |
-| **KPI 16** (Productive Alerts) | `KPI_16` / `KRI_3` | `q_<test_quarter>`, `alert_count`, `tp_count` | Validates that sample size meets statistical significance ($\ge 5\text{--}10$ TPs). |
-| **KPI 11 / 12** (FP / TP Rates) | `KPI_11`, `KPI_12` | `q_<test_quarter>` | Forecasts the noise-to-signal trade-off if thresholds are lowered. |
+| **`KRI_3`** | `base_quarter_accum_ratio_amount`, `test_quarter_accum_ratio_amount`, `kri3_amount_deviation` | Float Scalar | Amount proximity accumulation shift. |
+| **`KRI_3`** | `base_quarter_accum_ratio_freq`, `test_quarter_accum_ratio_freq`, `kri3_freq_deviation` | Float Scalar | Frequency proximity accumulation shift. |
+| **`KPI_15a`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | Proportion of TPs clustered near amount threshold. |
+| **`KPI_15b`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) | Dynamic Time-Series | Proportion of TPs clustered near frequency threshold. |
+| **`KPI_6`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`), `first_productive_percentile_position` | Dynamic Time-Series | Min percentile rank of productive alerts relative to threshold. |
+| **`KPI_18_quarter`**| `abs_distance_first_tp_and_min_ratio_threshold`, `abs_distance_first_tp_and_zscore_threshold` | Distance Scalar | Mathematical proximity to secondary configuration limits. |
 
 ---
 
 ### KRI 6: Dormant Alert Definition Identification (Zero-Generation Control)
+* **Trigger Conditions**:
+  - Active for $\ge 3$ consecutive quarters and subsequently produces **0 alerts across 3 consecutive quarters** ($Q_T = Q_{T-1} = Q_{T-2} = 0$).
 
-#### Technical Logic & Trigger Conditions
-Non-statistical, temporal absence evaluation:
-$$\text{Alerts}(Q_{t}) = 0 \quad \text{for } t \in \{T, T-1, T-2\} \quad \text{after being active for } \ge 3 \text{ historical quarters}$$
-
-#### Business Value & Governance Implications
-Identifies dead controls, overly restrictive multi-condition thresholds, or broken upstream data pipelines, enabling safe decommissioning or corrective re-engineering.
-
-#### Relevant KPIs & Schema Mapping
-| Relevant KPI | Codebase Source Table | Extracted / Target Columns | Diagnostic Purpose for KRI 6 |
+| Source Sheet | Target Column Name | Format / Nature | Diagnostic Function |
 | :--- | :--- | :--- | :--- |
-| **KPI 1** (Alert Count) | `KPI_1` / `KRI_6` | `test_quarter_alert_count`, `test_quarter_minus_1_alert_count`, `test_quarter_minus_2_alert_count` | Confirms zero alert generation across all 3 trailing quarters ($Q_T = Q_{T-1} = Q_{T-2} = 0$). |
-| **KPI 2b** (Alerted Customers) | `KPI_2b` | `q_<test_quarter>` | Confirms zero customer coverage. |
-| **KPI 4b** (Tx Volume) | Feeds / Logs | `transaction_count`, `eligible_population_count` | **Critical Discriminator:** If Tx volume $> 0$ but alerts $= 0 \rightarrow$ threshold too high; if Tx volume $= 0 \rightarrow$ data pipeline broken or segment empty. |
-| **KPI 18** (Threshold Configuration) | `KPI_18_quarter` / `thresholds` | `min_amount_threshold`, `min_frequency_threshold`, `flags` | Checks whether extreme threshold values prevent alerts from ever firing. |
-| **KPI 17** (Typology Overlap) | `KPI_17_quarter` | `general_overlap_ratio` | Evaluates if a newer, broader AD has completely superseded this rule, making it redundant. |
+| **`KRI_6`** | `test_quarter_alert_count`, `test_quarter_minus_1_alert_count`, `test_quarter_minus_2_alert_count` | Integer Scalars | Confirms zero alert generation across $Q_T, Q_{T-1}, Q_{T-2}$. |
+| **`KPI_1`** | `Q{N}_{YYYY}` (e.g. `Q1_2023` to `Q3_2025`) | Dynamic Time-Series | Verifies historical activity before entering dormancy. |
+| **`thresholds`** | `min_threshold`, `max_threshold`, `min_frequency`, `min_percentage`, `threshold_change` | Master Config | Checks for unattainable or hyper-restrictive parameters. |
+| **`overlap`** | `general_overlap_ratio`, `parent_control`, `subsequent_control` | Relational | Checks if the control is obsolete and fully superseded. |
+| **`country_stats`** | `number_of_active_ads_count`, `number_of_unique_customers_count` | Summary Stat | Differentiates empty target segment from data pipeline defect. |
 
 ---
 
-## 4. Master Cross-KRI Relevance Matrix
+## 4. Master Cross-KRI Relevance & Column Reference Matrix
 
-| KPI Indicator | KPI Name | KRI 1 (Volume Shift) | KRI 2 (TP Decay) | KRI 3 (Proximity Accum) | KRI 6 (Dormancy) | Primary Codebase Source |
-| :---: | :--- | :---: | :---: | :---: | :---: | :--- |
-| **KPI 1** | Alert Count | **Primary** | Secondary | Context | **Primary** | `KPI_1`, `KRI_1`, `KRI_6` |
-| **KPI 2b** | Alerted Customers | **Primary** | Secondary | Context | Secondary | `KPI_2b` |
-| **KPI 3** | Productive Customers (L3) | Secondary | **Primary** | Context | — | `KPI_3` |
-| **KPI 4b** | Transaction Volume | **Primary** | Context | Context | **Primary** | Ingestion feeds / Metadata |
-| **KPI 6** | 1st Productive Position | — | Secondary | **Primary** | — | `KPI_6` |
-| **KPI 11** | False Positive Ratio | **Primary** | Secondary | Secondary | — | `KPI_11`, `KPI_17_quarter` |
-| **KPI 12** | True Positive Ratio | **Primary** | **Primary** | Secondary | — | `KPI_12` |
-| **KPI 13** | Effectiveness State | Secondary | **Primary** | Secondary | Secondary | Derived from `KPI_11` / `12` |
-| **KPI 14** | Lifecycle Timeliness | Context | Context | — | — | Pipeline metadata |
-| **KPI 15a** | Amount Proximity TP % | — | — | **Primary** | — | `KPI_15a`, `KRI_3` |
-| **KPI 15b** | Freq Proximity TP % | — | — | **Primary** | — | `KPI_15b`, `KRI_3` |
-| **KPI 16** | Productive Alerts Count | Secondary | **Primary** | **Primary** | — | `KPI_16`, `KPI_17_quarter` |
-| **KPI 17** | Unique Typology Productivity | Context | **Primary** | — | Secondary | `KPI_17`, `KPI_17_quarter` |
-| **KPI 18** | Secondary Parameters / Limits | Context | Context | **Primary** | **Primary** | `KPI_18_quarter` |
-
----
-
-## 5. End-User Narrative Decision Logic
-
-```text
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                             DIAGNOSTIC ROOT-CAUSE DECISION TREE                                 │
-├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ KRI 1 Spike:                                                                                     │
-│   ├── KPI 2b proportional increase + KPI 4b growth ──> Macro segment growth ──> [NO ACTION]     │
-│   ├── KPI 2b flat + KPI 1 spike                   ──> Customer repeat bursts ──> [RE-BAND]      │
-│   └── KPI 11 surges (>98%) + KPI 12 collapses     ──> Low-quality noise      ──> [RECALIBRATE]  │
-│                                                                                                  │
-│ KRI 2 Drop:                                                                                      │
-│   ├── KPI 17 high overlap (>80%)                  ──> Captured by sister AD  ──> [NO ACTION]     │
-│   └── KPI 3 drop + KPI 6 shift                    ──> Detection decay        ──> [RECALIBRATE]  │
-│                                                                                                  │
-│ KRI 3 Proximity:                                                                                 │
-│   ├── KPI 15a/b high + KPI 6 ≤ 0.10               ──> Boundary clustering    ──> [RECALIBRATE]  │
-│   └── Multi-segment concentration                 ──> Variance across tiers  ──> [RE-BAND]      │
-│                                                                                                  │
-│ KRI 6 Dormancy:                                                                                  │
-│   ├── KPI 4b Tx Volume = 0                        ──> Data pipeline issue    ──> [PIPELINE FIX] │
-│   └── KPI 4b Tx Volume > 0 + KPI 18 restrictive   ──> Overly strict / dead   ──> [DECOM / TUNE] │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+| Metric / Sheet | Specific Column / Payload Field | Target Format | KRI 1 (Volume) | KRI 2 (TP Decay) | KRI 3 (Proximity) | KRI 6 (Dormancy) |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: |
+| **`KRI_1` / `2` / `3` / `6`** | `test_quarter_count`, `base_quarter_count`, `test_base_quarter_diff` | Integer Scalar | **Primary** | **Primary** | **Primary** | **Primary** |
+| **`KRI_1` / `2`** | `full_period_avg(*)`, `full_period_stddev_pop(*)` | Float Scalar | **Primary** | **Primary** | — | — |
+| **`KRI_1` / `2`** | `*_three_sigma_exceeded`, `*_with_consecutive` | Flag (`0`/`1`) | **Primary** | **Primary** | — | — |
+| **`KRI_3`** | `test_quarter_accum_ratio_amount`, `kri3_amount_deviation` | Float Scalar | — | — | **Primary** | — |
+| **`KRI_3`** | `test_quarter_accum_ratio_freq`, `kri3_freq_deviation` | Float Scalar | — | — | **Primary** | — |
+| **`KRI_6`** | `test_quarter_alert_count`, `test_quarter_minus_1_alert_count`, `test_quarter_minus_2_alert_count` | Trailing Counts | — | — | — | **Primary** |
+| **`KPI_1`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`), `YYYY-MM-01` | **Time-Series Payload** | **Primary** | Secondary | Context | **Primary** |
+| **`KPI_2b`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`), `YYYY-MM-01` | **Time-Series Payload** | **Primary** | Secondary | Context | Secondary |
+| **`KPI_3`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`), `YYYY-MM-01` | **Time-Series Payload** | Secondary | **Primary** | Context | — |
+| **`KPI_6`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`), `first_productive_percentile_position` | **Time-Series Payload** | — | Secondary | **Primary** | — |
+| **`KPI_11`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) (False Positive Rate %) | **Time-Series Payload** | **Primary** | Secondary | Secondary | — |
+| **`KPI_12`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) (True Positive Rate %) | **Time-Series Payload** | **Primary** | **Primary** | Secondary | — |
+| **`KPI_15a`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) (Amount Proximity TP %) | **Time-Series Payload** | — | — | **Primary** | — |
+| **`KPI_15b`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) (Frequency Proximity TP %) | **Time-Series Payload** | — | — | **Primary** | — |
+| **`KPI_16`** | `Q{N}_{YYYY}` (e.g. `Q3_2025`) (Productive Alerts Count) | **Time-Series Payload** | Secondary | **Primary** | **Primary** | — |
+| **`KPI_17_quarter`** | `general_overlap_ratio`, `prod_general_overlap_ratio` | Multi-Dimensional | Context | **Primary** | — | **Primary** |
+| **`KPI_17_quarter`** | `unique_tp_alerts_count_within_typology`, `typology_top_overlapping_AD_prod_alerts` | Multi-Dimensional | Context | **Primary** | — | Secondary |
+| **`KPI_18_quarter`** | `min_ratio_threshold`, `abs_distance_first_tp_and_min_ratio_threshold` | Multi-Dimensional | Context | Context | **Primary** | **Primary** |
+| **`country_stats`** | `number_of_open_alerts_quarterly`, `ratio_of_open_alerts_quarterly` | Aggregated Stat | **Primary** | Context | — | Context |
+| **`thresholds`** | `min_threshold`, `min_frequency`, `threshold_change`, `benchmark` | Master Config | **Primary** | **Primary** | **Primary** | **Primary** |
+| **`parsed_acd`** | `lod`, `case_status_(l1..l3)`, `l1..l4`, `final_status`, `ATL_pop` | Line-Level Trace | Secondary | **Primary** | Secondary | — |
