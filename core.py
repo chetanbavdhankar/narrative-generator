@@ -1011,10 +1011,16 @@ KPI_SPECIFICATIONS: dict[str, dict[str, str]] = {
         "story_template": "Generated {val} productive (L3 escalated) alerts in {test_quarter}.",
     },
     "KPI_17": {
-        "title": "Unique Productivity Within GS Typology",
+        "title": "Unique Productivity & Overlap Within Typology",
         "formula": "Productive alerts uniquely attributable after removing multi-AD overlap",
-        "description": "Measures productive yield uniquely attributable to this Alert Definition within its typology.",
-        "story_template": "Unique productivity metric stood at {val} in {test_quarter} after accounting for typology overlap.",
+        "description": "Measures sibling alert definition overlap ratios and productive yield uniquely attributable to this control.",
+        "story_template": "Unique productivity and sibling overlap metrics evaluated within typology.",
+    },
+    "KPI_18": {
+        "title": "Secondary Threshold Limits & Proximity Distances",
+        "formula": "Configured threshold parameter boundaries and distance to earliest productive alerts",
+        "description": "Measures active threshold boundaries (min/max amount, min frequency) and distance to earliest true positive alerts.",
+        "story_template": "Configured with active thresholds and evaluated for boundary proximity.",
     },
 }
 
@@ -1022,28 +1028,29 @@ KRI_RELEVANT_KPIS: dict[str, dict[str, Any]] = {
     "KRI_1": {
         "title": "Deviation in Alert Volume",
         "primary_kpis": ["KPI_1", "KPI_2b", "KPI_11", "KPI_12"],
-        "secondary_kpis": ["KPI_16", "KPI_3"],
-        "diagnostic_focus": "Evaluates whether alert volume surge is driven by customer breadth (KPI 2b) vs repeat bursts and verifies false positive (KPI 11) vs true positive (KPI 12) conversion stability.",
+        "secondary_kpis": ["KPI_16", "KPI_3", "KPI_18"],
+        "diagnostic_focus": "Evaluates whether alert volume surge is driven by customer breadth (KPI 2b) vs repeat bursts, and verifies false positive (KPI 11) vs true positive (KPI 12) conversion stability.",
     },
     "KRI_2": {
         "title": "Deviation in True Positive Volume",
-        "primary_kpis": ["KPI_16", "KPI_3", "KPI_12"],
-        "secondary_kpis": ["KPI_6", "KPI_17", "KPI_17_quarter"],
-        "diagnostic_focus": "Identifies true positive decay breadth across distinct customers (KPI 3) and checks if productive volume was cannibalized by overlapping sister controls (KPI 17/KPI 17_quarter).",
+        "primary_kpis": ["KPI_16", "KPI_3", "KPI_12", "KPI_6"],
+        "secondary_kpis": ["KPI_1", "KPI_17", "KPI_18"],
+        "diagnostic_focus": "Identifies true positive decay across distinct customers (KPI 3), evaluates conversion rate (KPI 12) and threshold margin sensitivity (KPI 6), and checks sibling control overlap (KPI 17).",
     },
     "KRI_3": {
         "title": "Accumulation in Threshold Proximity",
-        "primary_kpis": ["KPI_15a", "KPI_15b", "KPI_6", "KPI_18_quarter"],
-        "secondary_kpis": ["KPI_16", "KPI_11", "KPI_12"],
-        "diagnostic_focus": "Quantifies productive alert clustering near threshold boundaries (amount KPI 15a, frequency KPI 15b, secondary ratio/profile parameters KPI 18_quarter) to evaluate recalibration vs re-banding.",
+        "primary_kpis": ["KPI_15a", "KPI_15b", "KPI_6", "KPI_18"],
+        "secondary_kpis": ["KPI_16", "KPI_12", "KPI_11"],
+        "diagnostic_focus": "Quantifies productive alert clustering near threshold boundaries (amount KPI 15a, frequency KPI 15b, threshold distances KPI 18) to evaluate recalibration vs re-banding.",
     },
     "KRI_6": {
         "title": "Dormant Alert Definition Identification",
-        "primary_kpis": ["KPI_1", "KPI_17_quarter", "KPI_18_quarter"],
-        "secondary_kpis": ["KPI_2b", "KPI_17"],
-        "diagnostic_focus": "Confirms sustained zero-alert generation and isolates root cause between control obsolescence (superseded by sibling rule in KPI 17_quarter), hyper-restrictive parameters (KPI 18_quarter), or pipeline failure.",
+        "primary_kpis": ["KPI_1", "KPI_17", "KPI_18"],
+        "secondary_kpis": ["KPI_2b", "KPI_16"],
+        "diagnostic_focus": "Confirms sustained zero-alert generation and isolates root cause between control obsolescence (superseded by sibling rule in KPI 17), hyper-restrictive parameters (KPI 18), or pipeline failure.",
     },
 }
+
 
 
 # ── Scenario Qualitative Detection Logic Standards ─────────────────────────
@@ -1287,7 +1294,19 @@ def serialize_dossier_markdown(
 
             primary_kpis = k_map.get("primary_kpis", [])
             secondary_kpis = k_map.get("secondary_kpis", [])
-            all_unit_kpis = [(pk, "Primary Evidence") for pk in primary_kpis] + [(sk, "Supporting Evidence") for sk in secondary_kpis]
+            all_unit_kpis = []
+            seen_kpis = set()
+            for pk in primary_kpis:
+                clean_pk = "KPI_17" if pk == "KPI_17_quarter" else ("KPI_18" if pk == "KPI_18_quarter" else pk)
+                if clean_pk not in seen_kpis:
+                    all_unit_kpis.append((clean_pk, "Primary Evidence"))
+                    seen_kpis.add(clean_pk)
+            for sk in secondary_kpis:
+                clean_sk = "KPI_17" if sk == "KPI_17_quarter" else ("KPI_18" if sk == "KPI_18_quarter" else sk)
+                if clean_sk not in seen_kpis:
+                    all_unit_kpis.append((clean_sk, "Supporting Evidence"))
+                    seen_kpis.add(clean_sk)
+
 
             for kpi_code, rel_type in all_unit_kpis:
                 if kpi_code in ("KPI_17", "KPI_17_quarter"):
