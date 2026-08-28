@@ -160,24 +160,23 @@ def normalize_business_line(bl_str: str) -> str:
 
 
 def extract_combo_from_filename(filename: str) -> tuple[str, str] | None:
-    """Extract (country, business_line) from anywhere within the filename.
+    """Extract (country, business_line) from anywhere within short or long filenames.
 
-    Naming convention: ...<COUNTRY>_<BUSINESS_LINE>...xlsx
-    Supported business line forms (case-insensitive):
-      RB: RB, Retail, Retail_Bank, Retail_Banking, RetailBank, RetailBanking
-      WB: WB, Wholesale, Wholesale_Bank, Wholesale_Banking, WholesaleBank, WholesaleBanking
+    Spaces and hyphens in the filename are normalized to underscores prior to matching.
 
     Examples:
-      PL_RB_kri.xlsx                         -> ('PL', 'RB')
-      2026_Q1_PL_retail_banking_kpi.xlsx     -> ('PL', 'RB')
-      alert_data_RO_wholesale_bank.xlsx      -> ('RO', 'WB')
-      FR_retail_2026.xlsx                    -> ('FR', 'RB')
-      data_CH_WB.xlsx                        -> ('CH', 'WB')
+      export_2026_Q1_consolidated_RO_Retail_Bank_monitoring_kpi_v2.xlsx -> ('RO', 'RB')
+      ro_retail.xlsx                                                    -> ('RO', 'RB')
+      alert_data_RO_wholesale_bank_2026_Q1.xlsx                         -> ('RO', 'WB')
+      PL Retail Banking Data Final.xlsx                                 -> ('PL', 'RB')
+      2026_Q1_pl_rb.xlsx                                                -> ('PL', 'RB')
+      FR-retail-2026.xlsx                                               -> ('FR', 'RB')
     """
     if filename.startswith("~$"):
         return None
 
-    stem = Path(filename).stem.strip()
+    # Normalize spaces and hyphens to underscores for clean substring matching
+    stem = re.sub(r"[\s\-]+", "_", Path(filename).stem.strip())
     m = _COMBO_RE.search(stem)
     if m:
         country = m.group(1).upper()
