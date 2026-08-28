@@ -1273,11 +1273,7 @@ def serialize_dossier_markdown(
         parts.append(_format_metric_row("Customer Risk Tier", f"{decoded['risk_name']} [Code: {decoded['risk_code']}]", "AD_Taxonomy_Standard"))
         parts.append(_format_metric_row("Monitoring Evaluation Window", f"{decoded['period_alias']} ({decoded['period_description']}) [Code: {decoded['period_code']}]", "AD_Taxonomy_Standard"))
 
-        if decoded.get("is_combined") and decoded.get("members_detail"):
-            parts.append(_format_metric_row("Segment Composition Type", f"Combined Segment ({len(decoded['members_detail'])} Member Sub-Segments)", "AD_Taxonomy_Standard"))
-            for m in decoded["members_detail"]:
-                parts.append(_format_metric_row(f"Included Sub-Segment [{m['code']}]", f"{m['name']} (CTC: {m['ctc']}, LOB: {m['lob']})", "AD_Taxonomy_Standard"))
-        else:
+        if decoded.get("customer_type_code") and decoded.get("customer_type_code") != "—":
             parts.append(_format_metric_row("Customer Type Code (CTC)", decoded["customer_type_code"], "AD_Taxonomy_Standard"))
 
 
